@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="50%" stop-color="#0d9488" />
+      <stop offset="100%" stop-color="#0891b2" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#047857" flood-opacity="0.35" />
+    </filter>
+  </defs>
+  <!-- Background with squircle -->
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)" />
+  <!-- Capsule Icon -->
+  <g transform="translate(256, 256) rotate(-45) translate(-256, -256)" filter="url(#shadow)">
+    <!-- Pill Top Half (White) -->
+    <path d="M 196,150 C 196,105 225,75 256,75 C 287,75 316,105 316,150 L 316,250 L 196,250 Z" fill="#ffffff" />
+    <!-- Pill Bottom Half (Emerald Glow) -->
+    <path d="M 196,250 L 316,250 L 316,360 C 316,405 287,435 256,435 C 225,435 196,405 196,360 Z" fill="#34d399" />
+    <!-- Medical Cross on Pill -->
+    <rect x="244" y="130" width="24" height="60" rx="6" fill="#059669" />
+    <rect x="226" y="148" width="60" height="24" rx="6" fill="#059669" />
+    <!-- Reflection highlight -->
+    <path d="M 216,110 Q 240,95 256,95" stroke="#ffffff" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.6" />
+  </g>
+</svg>

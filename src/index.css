@@ -1,0 +1,5 @@
+@import "tailwindcss";
+
+html.elderly-mode {
+  font-size: 118%;
+}
