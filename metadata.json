@@ -1,0 +1,6 @@
+{
+  "name": "المساعد الطبي المنزلي | Home Medical Assistant",
+  "description": "تطبيق ذكي لمساعدة المستخدمين على قراءة التحاليل الطبية والتعرف على الأدوية وبدائلها التجارية عبر كاميرا الهاتف والذكاء الاصطناعي البصري.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

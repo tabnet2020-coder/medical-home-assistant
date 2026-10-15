@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>المساعد الطبي المنزلي | إشراف عمر الطابوني - سبها</title>
+    <meta name="description" content="مبادرة إنسانية مجانية لمساعدة المرضى وعامة الناس في المنازل على قراءة التحاليل الطبية والتعرف على الأدوية والبدائل التجارية عبر كاميرا الهاتف • تأسيس وإشراف: عمر الطابوني (سبها)." />
+    <meta name="author" content="عمر الطابوني - سبها" />
+    <meta property="og:title" content="المساعد الطبي المنزلي | عمر الطابوني - سبها" />
+    <meta property="og:description" content="مبادرة إنسانية مجانية لمساعدة المرضى على قراءة التحاليل والتعرف على الأدوية والبدائل التجارية • إشراف: عمر الطابوني - سبها." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#059669" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="مساعد طبي" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <script>
+      // Self-healing: if an old/stale Service Worker caused chunk loading errors, auto-unregister and clear caches
+      window.addEventListener('error', function (e) {
+        var msg = (e && (e.message || (e.target && e.target.src))) || '';
+        if (
+          typeof msg === 'string' &&
+          (msg.indexOf('Failed to fetch') !== -1 ||
+           msg.indexOf('dynamically imported module') !== -1 ||
+           msg.indexOf('Loading chunk') !== -1)
+        ) {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function (registrations) {
+              var unregisterPromises = registrations.map(function (reg) { return reg.unregister(); });
+              Promise.all(unregisterPromises).then(function () {
+                if ('caches' in window) {
+                  caches.keys().then(function (keys) {
+                    Promise.all(keys.map(function (k) { return caches.delete(k); })).then(function () {
+                      window.location.reload();
+                    });
+                  });
+                } else {
+                  window.location.reload();
+                }
+              });
+            });
+          }
+        }
+      });
+    </script>
+  </head>
+  <body class="bg-slate-50 text-slate-900 font-['Cairo',sans-serif] antialiased min-h-screen overflow-x-hidden w-full selection:bg-emerald-100 selection:text-emerald-900">
+    <noscript>
+      <div style="font-family: system-ui, sans-serif; text-align: center; padding: 30px; direction: rtl; max-width: 600px; margin: 40px auto; background: #fff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+        <h2 style="color: #059669; font-size: 20px; font-weight: 800; margin-bottom: 12px;">تنبيه: يتطلب تشغيل الموقع تفعيل الجافاسكربت (JavaScript)</h2>
+        <p style="color: #475569; font-size: 14px; line-height: 1.6;">يرجى تفعيل JavaScript من إعدادات المتصفح للتمكن من استخدام المساعد الطبي المنزلي وتصفح الأدوية وقراءة التحاليل الطبية.</p>
+      </div>
+    </noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
