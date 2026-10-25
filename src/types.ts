@@ -123,9 +123,74 @@ export interface ImageEnhancementOptions {
 
 export interface SavedHistoryItem {
   id: string;
-  type: 'medicine' | 'lab';
+  type: 'medicine' | 'lab' | 'interaction' | 'prescription';
   title: string;
   timestamp: string;
   summary: string;
-  data: MedicineAnalysisResult | LabAnalysisResult;
+  data: MedicineAnalysisResult | LabAnalysisResult | DrugInteractionResult | PrescriptionAnalysisResult;
 }
+
+export interface DuplicateIngredientAlert {
+  ingredient: string;
+  medicines: string[];
+  warningAr: string;
+}
+
+export interface DrugInteractionDetail {
+  medicineA: string;
+  medicineB: string;
+  severity: 'severe' | 'moderate' | 'mild' | 'none';
+  effectAr: string;
+  recommendationAr: string;
+}
+
+export interface DailyScheduleSlot {
+  timeOfDay: 'morning' | 'noon' | 'evening' | 'bedtime';
+  timeLabelAr: string;
+  medicines: {
+    name: string;
+    instructionAr: string;
+  }[];
+}
+
+export interface DrugInteractionResult {
+  medicinesChecked: string[];
+  safetyStatus: 'SAFE' | 'CAUTION' | 'DANGER';
+  summaryAr: string;
+  duplicateIngredients: DuplicateIngredientAlert[];
+  interactions: DrugInteractionDetail[];
+  dailySchedule: DailyScheduleSlot[];
+  elderlySummaryAr: string;
+  confidenceScore: number;
+  timestamp: string;
+}
+
+export interface PrescribedMedicineItem {
+  id: string;
+  nameEn: string;
+  nameAr: string;
+  activeIngredient?: string;
+  dosageForm?: string;
+  strength?: string;
+  dosageInstructionAr: string;
+  frequencyAr: string;
+  timingAr: string;
+  purposeAr: string;
+  duration?: string;
+  pharmacistWarning?: string;
+}
+
+export interface PrescriptionAnalysisResult {
+  doctorName?: string;
+  clinicOrHospital?: string;
+  prescriptionDate?: string;
+  diagnosisNotes?: string;
+  medicines: PrescribedMedicineItem[];
+  overallAdviceAr: string;
+  elderlySummaryAr: string;
+  pharmacistConfirmationAlert: string;
+  confidenceScore: number;
+  rawOcrText?: string;
+  timestamp: string;
+}
+

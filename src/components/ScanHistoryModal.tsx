@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   History,
   X,
@@ -7,8 +6,11 @@ import {
   Pill,
   FileSpreadsheet,
   ArrowRight,
-  Printer
+  Printer,
+  ShieldAlert,
+  FileText
 } from 'lucide-react';
+
 import { SavedHistoryItem } from '../types';
 
 interface Props {
@@ -93,6 +95,10 @@ export const ScanHistoryModal: React.FC<Props> = ({
                     <span className="p-1 rounded-md bg-slate-100 text-slate-600">
                       {item.type === 'medicine' ? (
                         <Pill className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : item.type === 'interaction' ? (
+                        <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                      ) : item.type === 'prescription' ? (
+                        <FileText className="w-3.5 h-3.5 text-indigo-600" />
                       ) : (
                         <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
                       )}

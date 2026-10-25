@@ -18,6 +18,8 @@ import { ScanHistoryModal } from './components/ScanHistoryModal';
 import { HealthTipBanner } from './components/HealthTipBanner';
 import { MedicineDetailPage } from './components/MedicineDetailPage';
 import { ChangelogModal } from './components/ChangelogModal';
+import { DrugInteractionChecker } from './components/DrugInteractionChecker';
+import { PrescriptionReader } from './components/PrescriptionReader';
 import { APP_CURRENT_VERSION } from './data/changelog';
 import {
   sampleMedicineDemos,
@@ -28,6 +30,8 @@ import {
 import {
   MedicineAnalysisResult,
   LabAnalysisResult,
+  DrugInteractionResult,
+  PrescriptionAnalysisResult,
   SavedHistoryItem,
   Medicine
 } from './types';
@@ -128,6 +132,43 @@ export default function App() {
       console.warn('Failed to persist scan history:', e);
     }
   };
+
+  const handleSaveInteractionResult = (res: DrugInteractionResult) => {
+    const newItem: SavedHistoryItem = {
+      id: `interaction-${Date.now()}`,
+      type: 'interaction',
+      title: `فحص تعارض: ${res.medicinesChecked.join(' + ')}`,
+      timestamp: new Date().toISOString(),
+      summary: res.summaryAr.slice(0, 100) + '...',
+      data: res
+    };
+    const updated = [newItem, ...savedHistory];
+    setSavedHistory(updated);
+    try {
+      localStorage.setItem('medical_scan_history', JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Failed to persist scan history:', e);
+    }
+  };
+
+  const handleSavePrescriptionResult = (res: PrescriptionAnalysisResult) => {
+    const newItem: SavedHistoryItem = {
+      id: `rx-${Date.now()}`,
+      type: 'prescription',
+      title: `روشتة: ${res.doctorName || 'طبيب استشاري'} (${res.medicines.length} أدوية)`,
+      timestamp: new Date().toISOString(),
+      summary: `الأدوية: ${res.medicines.map(m => m.nameAr || m.nameEn).join('، ')}`,
+      data: res
+    };
+    const updated = [newItem, ...savedHistory];
+    setSavedHistory(updated);
+    try {
+      localStorage.setItem('medical_scan_history', JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Failed to persist scan history:', e);
+    }
+  };
+
 
   const handleDeleteHistoryItem = (id: string) => {
     const updated = savedHistory.filter(i => i.id !== id);
@@ -484,6 +525,16 @@ export default function App() {
           </div>
         )}
 
+        {/* TAB: DRUG INTERACTIONS CHECKER (فحص تعارض الأدوية) */}
+        {activeTab === 'drug_interactions' && (
+          <DrugInteractionChecker onSaveResult={handleSaveInteractionResult} />
+        )}
+
+        {/* TAB: PRESCRIPTION READER (قراءة روشتة طبيب) */}
+        {activeTab === 'prescription' && (
+          <PrescriptionReader onSaveResult={handleSavePrescriptionResult} />
+        )}
+
         {/* TAB 3: MEDICINE DIRECTORY (دليل الأدوية والبدائل) */}
         {activeTab === 'medicine_directory' && (
           <MedicineDirectory onOpenMedicineDetail={(med) => setSelectedMedicineDetail(med)} />
@@ -548,9 +599,15 @@ export default function App() {
             setMedicineResult(item.data as MedicineAnalysisResult);
             setActiveTab('medicine');
             setSelectedMedicineDetail(null);
-          } else {
+          } else if (item.type === 'lab') {
             setLabResult(item.data as LabAnalysisResult);
             setActiveTab('lab');
+            setSelectedMedicineDetail(null);
+          } else if (item.type === 'interaction') {
+            setActiveTab('drug_interactions');
+            setSelectedMedicineDetail(null);
+          } else if (item.type === 'prescription') {
+            setActiveTab('prescription');
             setSelectedMedicineDetail(null);
           }
         }}

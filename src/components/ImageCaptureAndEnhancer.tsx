@@ -25,9 +25,9 @@ interface SampleItem {
 }
 
 interface Props {
-  mode: 'medicine' | 'lab';
+  mode: 'medicine' | 'lab' | 'prescription';
   onImageReady: (base64Image: string, enhancementDetails: string) => void;
-  samples: SampleItem[];
+  samples?: SampleItem[];
   onSelectSample?: (sampleId: string) => void;
   isAnalyzing: boolean;
 }
@@ -119,7 +119,9 @@ export const ImageCaptureAndEnhancer: React.FC<Props> = ({
   onSelectSample,
   isAnalyzing
 }) => {
-  const [activeSource, setActiveSource] = useState<'upload' | 'camera' | 'samples'>('samples');
+  const [activeSource, setActiveSource] = useState<'upload' | 'camera' | 'samples'>(
+    samples && samples.length > 0 ? 'samples' : 'upload'
+  );
   const [rawImageSrc, setRawImageSrc] = useState<string | null>(null);
   const [enhancedImageSrc, setEnhancedImageSrc] = useState<string | null>(null);
   
@@ -513,55 +515,57 @@ export const ImageCaptureAndEnhancer: React.FC<Props> = ({
             </div>
 
             {/* SAMPLES SECTION (Ready Samples) */}
-            <div className="pt-2">
-              <div className="mb-3.5">
-                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  <span>أو اختر عينة تجريبية لاختبار دقة الفحص الفوري بنقرة واحدة:</span>
-                </h4>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {mode === 'medicine'
-                    ? 'يمكنك تجربة التعرف على أدوية شائعة فوراً دون الحاجة لتصوير الآن.'
-                    : 'يمكنك تجربة تقارير تحاليل حقيقية (CBC، دهون وسكر، وظائف كبد وكلى) فوراً.'}
-                </p>
-              </div>
+            {samples && samples.length > 0 && (
+              <div className="pt-2">
+                <div className="mb-3.5">
+                  <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span>أو اختر عينة تجريبية لاختبار دقة الفحص الفوري بنقرة واحدة:</span>
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {mode === 'medicine'
+                      ? 'يمكنك تجربة التعرف على أدوية شائعة فوراً دون الحاجة لتصوير الآن.'
+                      : 'يمكنك تجربة تقارير تحاليل حقيقية (CBC، دهون وسكر، وظائف كبد وكلى) فوراً.'}
+                  </p>
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                {samples.map(sample => (
-                  <div
-                    key={sample.id}
-                    onClick={() => {
-                      if (onSelectSample) {
-                        onSelectSample(sample.id);
-                      } else {
-                        setRawImageSrc(sample.previewUrl);
-                      }
-                    }}
-                    className="group relative border border-slate-200 hover:border-emerald-500 rounded-xl overflow-hidden bg-slate-50/50 hover:bg-emerald-50/20 p-3.5 transition-all cursor-pointer flex flex-col justify-between"
-                  >
-                    <div className="aspect-4/3 rounded-lg overflow-hidden bg-slate-200 mb-3 relative">
-                      <img
-                        src={sample.previewUrl}
-                        alt={sample.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                      <div className="absolute inset-0 bg-slate-950/20 group-hover:bg-slate-950/0 transition-colors" />
-                      <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-slate-900/80 text-white text-[10px] rounded-md font-medium backdrop-blur-xs">
-                        جاهز للفحص
-                      </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                  {samples.map(sample => (
+                    <div
+                      key={sample.id}
+                      onClick={() => {
+                        if (onSelectSample) {
+                          onSelectSample(sample.id);
+                        } else {
+                          setRawImageSrc(sample.previewUrl);
+                        }
+                      }}
+                      className="group relative border border-slate-200 hover:border-emerald-500 rounded-xl overflow-hidden bg-slate-50/50 hover:bg-emerald-50/20 p-3.5 transition-all cursor-pointer flex flex-col justify-between"
+                    >
+                      <div className="aspect-4/3 rounded-lg overflow-hidden bg-slate-200 mb-3 relative">
+                        <img
+                          src={sample.previewUrl}
+                          alt={sample.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                        <div className="absolute inset-0 bg-slate-950/20 group-hover:bg-slate-950/0 transition-colors" />
+                        <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-slate-900/80 text-white text-[10px] rounded-md font-medium backdrop-blur-xs">
+                          جاهز للفحص
+                        </span>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">
+                          {sample.name}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
+                          {sample.subtitle}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">
-                        {sample.name}
-                      </h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
-                        {sample.subtitle}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

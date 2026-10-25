@@ -10,10 +10,6 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig(() => {
   return {
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || process.env.API_KEY || ''),
-      'process.env.API_KEY': JSON.stringify(process.env.API_KEY || process.env.GEMINI_API_KEY || ''),
-    },
     plugins: [
       react(),
       tailwindcss(),
@@ -39,6 +35,12 @@ export default defineConfig(() => {
           scope: '/',
           icons: [
             {
+              src: '/icon.svg',
+              sizes: 'any',
+              type: 'image/svg+xml',
+              purpose: 'any maskable',
+            },
+            {
               src: '/pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
@@ -55,12 +57,6 @@ export default defineConfig(() => {
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
-            },
-            {
-              src: '/icon.svg',
-              sizes: '512x512',
-              type: 'image/svg+xml',
-              purpose: 'any',
             }
           ],
         },

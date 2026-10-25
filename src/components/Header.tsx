@@ -8,12 +8,14 @@ import {
   ShieldCheck,
   Sparkles,
   MapPin,
-  GitCommit
+  GitCommit,
+  ShieldAlert,
+  FileText
 } from 'lucide-react';
 import { APP_CURRENT_VERSION } from '../data/changelog';
 import { PWAInstallButton } from './PWAInstallButton';
 
-export type ActiveTab = 'medicine' | 'lab' | 'medicine_directory' | 'lab_guide';
+export type ActiveTab = 'medicine' | 'lab' | 'drug_interactions' | 'prescription' | 'medicine_directory' | 'lab_guide';
 
 interface Props {
   activeTab: ActiveTab;
@@ -71,11 +73,11 @@ export const Header: React.FC<Props> = ({
           
           {/* Logo & Branding */}
           <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-500 p-0.5 shadow-md shadow-emerald-500/20 flex items-center justify-center text-white shrink-0">
-              <div className="w-full h-full bg-emerald-700/20 rounded-[14px] flex items-center justify-center backdrop-blur-xs">
-                <Pill className="w-5 h-5 sm:w-6 sm:rotate-45 rotate-45" />
-              </div>
-            </div>
+            <img
+              src="/icon.svg"
+              alt="المساعد الطبي المنزلي"
+              className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl shadow-md shrink-0 object-contain"
+            />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h1 className="text-base sm:text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-1.5 truncate">
@@ -153,6 +155,30 @@ export const Header: React.FC<Props> = ({
           </button>
 
           <button
+            onClick={() => setActiveTab('drug_interactions')}
+            className={`flex items-center gap-2 py-3 px-3.5 text-xs sm:text-sm font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === 'drug_interactions'
+                ? 'border-amber-600 text-amber-700 bg-amber-50/50 rounded-t-lg'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <ShieldAlert className={`w-4 h-4 ${activeTab === 'drug_interactions' ? 'text-amber-600' : 'text-slate-400'}`} />
+            <span>فحص تعارض الأدوية</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('prescription')}
+            className={`flex items-center gap-2 py-3 px-3.5 text-xs sm:text-sm font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === 'prescription'
+                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-lg'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <FileText className={`w-4 h-4 ${activeTab === 'prescription' ? 'text-indigo-600' : 'text-slate-400'}`} />
+            <span>قراءة روشتة طبيب</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('lab')}
             className={`flex items-center gap-2 py-3 px-3.5 text-xs sm:text-sm font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'lab'
@@ -180,11 +206,11 @@ export const Header: React.FC<Props> = ({
             onClick={() => setActiveTab('lab_guide')}
             className={`flex items-center gap-2 py-3 px-3.5 text-xs sm:text-sm font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'lab_guide'
-                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-lg'
+                ? 'border-purple-600 text-purple-700 bg-purple-50/50 rounded-t-lg'
                 : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
             }`}
           >
-            <BookOpen className={`w-4 h-4 ${activeTab === 'lab_guide' ? 'text-indigo-600' : 'text-slate-400'}`} />
+            <BookOpen className={`w-4 h-4 ${activeTab === 'lab_guide' ? 'text-purple-600' : 'text-slate-400'}`} />
             <span>موسوعة التحاليل المرجعية</span>
           </button>
         </nav>
@@ -192,3 +218,4 @@ export const Header: React.FC<Props> = ({
     </header>
   );
 };
+
