@@ -35,25 +35,25 @@ export default defineConfig(() => {
           scope: '/',
           icons: [
             {
-              src: '/icon.svg',
+              src: '/icon.svg?v=5',
               sizes: 'any',
               type: 'image/svg+xml',
               purpose: 'any maskable',
             },
             {
-              src: '/pwa-192x192.png',
+              src: '/pwa-192x192.png?v=5',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png',
+              src: '/pwa-512x512.png?v=5',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-maskable-512x512.png',
+              src: '/pwa-maskable-512x512.png?v=5',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',

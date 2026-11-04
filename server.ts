@@ -44,8 +44,32 @@ function normalizeStr(str: string): string {
     .trim();
 }
 
-// Helper: Call Gemini with model fallback, JSON cleanup, and robust error handling
-async function callGeminiVision(prompt: string, imageBase64: string, mimeTypeFallback: string): Promise<any> {
+// Helper: Parse Gemini JSON safely, handling code blocks, braces, brackets, and array responses
+function parseGeminiJsonResponse(raw: string): any {
+  let rawText = (raw || '{}').trim();
+  rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+  const firstBrace = rawText.indexOf('{');
+  const firstBracket = rawText.indexOf('[');
+  if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+    const lastBracket = rawText.lastIndexOf(']');
+    if (lastBracket > firstBracket) {
+      rawText = rawText.substring(firstBracket, lastBracket + 1);
+    }
+  } else if (firstBrace !== -1) {
+    const lastBrace = rawText.lastIndexOf('}');
+    if (lastBrace > firstBrace) {
+      rawText = rawText.substring(firstBrace, lastBrace + 1);
+    }
+  }
+  const parsed = JSON.parse(rawText);
+  if (Array.isArray(parsed)) {
+    return { items: parsed, medicines: parsed };
+  }
+  return parsed;
+}
+
+// Helper: Call Gemini with dual-client fallback, model fallback, JSON cleanup, and robust error handling
+async function callGeminiVision(prompt: string, imageBase64: string, mimeTypeFallback: string = 'image/jpeg'): Promise<any> {
   let cleanBase64 = imageBase64;
   let detectedMime = mimeTypeFallback || 'image/jpeg';
 
@@ -57,10 +81,11 @@ async function callGeminiVision(prompt: string, imageBase64: string, mimeTypeFal
     cleanBase64 = imageBase64.split(',')[1].trim();
   }
 
-  const models = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-2.5-flash'];
+  const primaryModels = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
   let lastError: any = null;
 
-  for (const model of models) {
+  // Attempt 1: AI Studio primary client with configured headers
+  for (const model of primaryModels) {
     try {
       const response = await ai.models.generateContent({
         model,
@@ -80,34 +105,58 @@ async function callGeminiVision(prompt: string, imageBase64: string, mimeTypeFal
         },
       });
 
-      const rawText = response.text || '{}';
-
-      // Smart cleaning: strip markdown code blocks
-      const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-
-      let jsonSubstring = cleaned;
-      const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        jsonSubstring = cleaned.substring(firstBrace, lastBrace + 1);
-      }
-
-      return JSON.parse(jsonSubstring);
+      return parseGeminiJsonResponse(response.text || '{}');
     } catch (err: any) {
-      console.warn(`[AI Vision] Model ${model} encountered error:`, err?.message || err);
+      console.warn(`[AI Vision - Primary] Model ${model} encountered error:`, err?.message || err);
       lastError = err;
     }
+  }
+
+  // Attempt 2: Standard Client fallback without custom headers (for Render and external hosting)
+  try {
+    const standardAi = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY || '',
+    });
+    const fallbackModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+    for (const model of fallbackModels) {
+      try {
+        const response = await standardAi.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: detectedMime,
+                  data: cleanBase64,
+                },
+              },
+              { text: prompt },
+            ],
+          },
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+
+        return parseGeminiJsonResponse(response.text || '{}');
+      } catch (err: any) {
+        console.warn(`[AI Vision - Standard Fallback] Model ${model} failed:`, err?.message || err);
+        lastError = err;
+      }
+    }
+  } catch (clientErr: any) {
+    console.warn('[AI Vision] Standard client creation error:', clientErr?.message || clientErr);
   }
 
   throw lastError || new Error('تعذر معالجة الصورة عبر جميع نماذج الذكاء الاصطناعي.');
 }
 
-// Helper: Call Gemini for text-only queries with model fallback
+// Helper: Call Gemini for text-only queries with dual-client fallback
 async function callGeminiText(prompt: string): Promise<any> {
-  const models = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-2.5-flash'];
+  const primaryModels = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
   let lastError: any = null;
 
-  for (const model of models) {
+  for (const model of primaryModels) {
     try {
       const response = await ai.models.generateContent({
         model,
@@ -117,21 +166,37 @@ async function callGeminiText(prompt: string): Promise<any> {
         },
       });
 
-      const rawText = response.text || '{}';
-      const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-
-      let jsonSubstring = cleaned;
-      const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        jsonSubstring = cleaned.substring(firstBrace, lastBrace + 1);
-      }
-
-      return JSON.parse(jsonSubstring);
+      return parseGeminiJsonResponse(response.text || '{}');
     } catch (err: any) {
-      console.warn(`[AI Text] Model ${model} encountered error:`, err?.message || err);
+      console.warn(`[AI Text - Primary] Model ${model} encountered error:`, err?.message || err);
       lastError = err;
     }
+  }
+
+  // Standard client fallback for external hosting (Render)
+  try {
+    const standardAi = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY || '',
+    });
+    const fallbackModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+    for (const model of fallbackModels) {
+      try {
+        const response = await standardAi.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+
+        return parseGeminiJsonResponse(response.text || '{}');
+      } catch (err: any) {
+        console.warn(`[AI Text - Standard Fallback] Model ${model} failed:`, err?.message || err);
+        lastError = err;
+      }
+    }
+  } catch (clientErr: any) {
+    console.warn('[AI Text] Standard client creation error:', clientErr?.message || clientErr);
   }
 
   throw lastError || new Error('تعذر معالجة البيانات عبر نماذج الذكاء الاصطناعي.');
@@ -143,7 +208,9 @@ async function callGeminiText(prompt: string): Promise<any> {
 // ----------------------------------------------------
 app.post('/api/analyze-medicine', async (req: Request, res: Response) => {
   try {
-    const { imageBase64, mimeType = 'image/jpeg', manualQuery } = req.body;
+    const imageBase64 = req.body.imageBase64 || req.body.image || req.body.base64Image;
+    const mimeType = req.body.mimeType || 'image/jpeg';
+    const manualQuery = req.body.manualQuery;
 
     let detectedTradeName = '';
     let detectedActiveIngredient = '';
@@ -169,39 +236,41 @@ app.post('/api/analyze-medicine', async (req: Request, res: Response) => {
 
     if (imageBase64) {
       const prompt = `
-أنت خبير صيدلاني واستشاري علم الأدوية السريري (Clinical Pharmacologist) وتعتمد على أحدث قواعد البيانات الدوائية والمكملات الغذائية العالمية المعتمدة (OpenFDA, WHO Model Formulary, British National Formulary BNF, Dietary Supplements Databases).
-أمامك صورة حقيقية لعلبة دواء أو شريط أقراص أو مكمل غذائي أو أكياس فوارة للحل في الماء (Sachets/Powder) أو مستحضر صيدلاني مركب، بما في ذلك العلب ذات الألوان الفاتحة أو البيضاء.
-قم بمسح الصورة ضوئياً بدقة متناهية واستخرج جميع النصوص المطبوعة وأي كتابات يدوية مضافة:
+أنت صيدلي إكلينيكي خبير واستشاري علم الأدوية السريري وتعتمد على أحدث قواعد البيانات الدوائية والمكملات الغذائية العالمية المعتمدة (OpenFDA, WHO Model Formulary, BNF, Dietary Supplements Databases).
+انظر إلى الصورة المرفقة واستخرج اسم الدواء التجاري (tradeName) والمادة الفعالة (activeIngredient) والشركة المصنعة (manufacturer) والتركيز (strength) والشكل الصيدلاني (dosageForm) بدقة متناهية.
+إذا كانت الصورة لعلبة دواء أو شريط أو دواء ذي ألوان فاتحة أو بيضاء (مثل NosiFol أو Panadol أو Cialis أو Augmentin أو المكملات الغذائية)، دقق النظر في الحواف والنصوص الصغيرة المطبوعة ولا ترجع أبداً قيماً فارغة أو 'دواء غير محدد' إذا كان هناك أي نص مرئي.
 
 قواعد وتوجيهات حرجة:
-1. اقرأ بدقة جميع أنواع المستحضرات: أدوية بشرية، مكملات غذائية (Dietary Supplements)، أكياس بودرة قابلة للحل (Sachets)، فوار، كبسولات، أقراص، محاليل.
+1. اقرأ بدقة جميع أنواع المستحضرات: أدوية بشرية، مكملات غذائية (Dietary Supplements)، أكياس بودرة قابلة للحل في الماء (Sachets)، فوار، كبسولات، أقراص، محاليل، مراهم، قطرات.
 2. إذا كان المستحضر يحتوي على عدة مواد فعالة مجتمعة (Combination Product مثل NosiFol الذي يحتوي على Inositol, Folic Acid, Zinc, Betaine, Vitamins B6, B12 من إنتاج شركة Sakura Italia)، اذكر جميع المواد الفعالة بدقة ووضوح في حقل activeIngredient ولا تكتفِ بواحدة فقط.
-3. فتش بدقة عن أي كتابة بخط اليد (Handwritten Notes) كتبها الصيدلي أو الطبيب بالقلم على العلبة (مثل تعليمات الجرعة: "كيس + نصف كوب ماء"، أو "1×2 بعد الأكل"، أو أي إرشادات بخط اليد). إذا وجدت أي كتابة يدوية، استخرجها حرفياً في حقل "handwrittenNotes" وأدمجها كذلك داخل حقل "howToTake". إذا لم توجد كتابة يدوية، اجعل قيمة "handwrittenNotes" نصاً فارغاً "".
+3. فتش بدقة عن أي كتابة بخط اليد (Handwritten Notes) كتبها الصيدلي أو الطبيب بالقلم على العلبة (مثل: "كيس + نصف كوب ماء"، أو "1×2 بعد الأكل"، أو أي إرشادات). استخرجها حرفياً في حقل "handwrittenNotes" وأدمجها كذلك داخل حقل "howToTake". إذا لم توجد كتابة يدوية، اجعل قيمتها نصاً فارغاً "".
+4. استخرج كل نص وكلمة تظهر على العلبة بالكامل في حقل "rawExtractedText".
 
-المطلوب استخراج وكتابة المعلومات التالية بصيغة JSON فقط:
-1. tradeName: الاسم التجاري المكتوب على العلبة تماماً كما يظهر (مثلاً: NosiFol, Tyra, Panadol, Cialis, Augmentin, Congestal, Concor, Glucophage, إلخ).
-2. activeIngredient: المادة الفعالة أو المواد الفعالة المركبة كاملة بدقة (مثل: Inositol + Folic Acid + Zinc + Betaine + Vitamin B6 + Vitamin B12, Tadalafil, Paracetamol, إلخ).
-3. manufacturer: اسم الشركة المصنعة المكتوب أو شعارها (مثل: Sakura Italia, Dar Aldawa, GlaxoSmithKline, Novartis, Pfizer, Sanofi, EIPICO, إلخ).
-4. strength: تركيز الجرعة أو محتوى العلبة (مثل: 30 Sachets of 5.5g, 20 mg, 500 mg, 1 g, 400 mg, 10 mg, 50mg/5ml).
-5. dosageForm: الشكل الصيدلاني (أكياس فوارة للحل في الماء Sachets, أقراص مغلفة Film Coated Tablets, كبسولات Capsules, شراب Syrup, إلخ).
-6. drugClass: الفئة والتصنيف العلاجي الدقيق باللغة العربية (مثل: مكمل غذائي علاجي لدعم الخصوبة وتكيس المبايض، مسكن وخافض حرارة، مضاد حيوي).
-7. mechanismOfAction: شرح علمي مبسط وعميق لآلية عمل الدواء أو المكونات داخل الجسم وكيف يعالج المشكلة.
-8. indications: مصفوفة بـ 3-5 دواعي استعمال أساسية مثبتة طبياً ومخصصة لهذا الدواء (مثال لـ NosiFol: علاج متلازمة تكيس المبايض PCOS، تحسين الخصوبة وجودة البويضات، تنظيم الهرمونات).
-9. sideEffects: مصفوفة بالآثار الجانبية الشائعة والمحتملة لهذا الدواء.
-10. safetyWarnings: مصفوفة بالتحذيرات وموانع الاستعمال الحرجة وملاحظات السلامة.
-11. drugInteractions: مصفوفة بأهم التداخلات الدوائية والغذائية المحذورة.
-12. specialPopulations: إرشادات دقيقة للحوامل والمرضعات وكبار السن وأصحاب الأمراض المزمنة.
-13. storageAdvice: شروط الحفظ والتخزين المثالية.
-14. commercialAlternatives: قائمة بأشهر 3-5 بدائل تجارية معروفة تحتوي على نفس المادة الفعالة ونفس الجرعة، مع التركيز الشديد على البدائل المتوفرة في ليبيا والدول العربية.
-15. elderlyFriendlySummary: ملخص مبسط جداً ومطمئن باللغة العربية الواضحة (سطرين كحد أقصى) موجه لكبير السن أو عائلته يشرح ما هو الدواء ولماذا يستخدم بلغة عامية فصيحة وسهلة جداً ومطمئنة.
-16. howToTake: طريقة وتوقيت الاستخدام الدقيق والمناسب للمريض بما في ذلك طريقة التحضير إن كان كيساً يذاب في ماء أو شراباً (وإذا كانت هناك كتابة بخط يد الصيدلي أدمجها هنا).
-17. handwrittenNotes: النص الحرفي لأي إرشادات أو جرعات كتبها الصيدلي أو الطبيب بخط يده على العلبة بالقلم إن وجدت، وإلا فارغ.
-18. expiryDate: قراءة تاريخ انتهاء الصلاحية من العلبة بدقة إن ظهر (مثال: 08/2027 أو EXP 2026)، أو كتابة "غير محدد على الجزء الظاهر من العلبة".
-19. confidenceScore: رقم من 0 إلى 100 يعكس وضوح قراءة اسم الدواء والمادة الفعالة من الصورة.
-20. textClarity: "high" أو "medium" أو "low".
-21. rawExtractedText: كافة النصوص والكلمات الإنجليزية والعربية المقروءة من العلبة بما فيها أي كتابة يدوية.
-
-أخرج النتيجة بصيغة JSON فقط.`;
+المطلوب إخراج النتيجة بصيغة JSON فقط بهذه الحقول المحددة:
+{
+  "tradeName": "الاسم التجاري المكتوب على العلبة تماماً كما يظهر (مثلاً: NosiFol, Tyra, Panadol, Cialis, Augmentin, Congestal, Concor, Glucophage, إلخ)",
+  "activeIngredient": "المادة الفعالة أو المواد الفعالة المركبة كاملة بدقة (مثل: Inositol + Folic Acid + Zinc + Betaine + Vitamin B6 + Vitamin B12, Tadalafil, Paracetamol, إلخ)",
+  "manufacturer": "اسم الشركة المصنعة المكتوب أو شعارها (مثل: Sakura Italia, Dar Aldawa, GlaxoSmithKline, Novartis, Pfizer, Sanofi, EIPICO, إلخ)",
+  "strength": "تركيز الجرعة أو محتوى العلبة (مثل: 30 Sachets of 5.5g, 20 mg, 500 mg, 1 g, 400 mg, 10 mg, 50mg/5ml)",
+  "dosageForm": "الشكل الصيدلاني (أكياس فوارة للحل في الماء Sachets, أقراص مغلفة, كبسولات, شراب, إلخ)",
+  "confidenceScore": 95,
+  "textClarity": "high",
+  "elderlyFriendlySummary": "ملخص مبسط جداً ومطمئن باللغة العربية الواضحة (سطرين كحد أقصى) موجه لكبير السن أو عائلته يشرح ما هو الدواء ولماذا يستخدم بلغة فصيحة وسهلة جداً ومطمئنة",
+  "howToTake": "طريقة وتوقيت الاستخدام الدقيق والمناسب للمريض بما في ذلك طريقة التحضير إن كان كيساً يذاب في ماء أو شراباً",
+  "sideEffects": ["أثر جانبي 1", "أثر جانبي 2"],
+  "safetyWarnings": ["تحذير وملاحظة سلامة 1", "تحذير 2"],
+  "commercialAlternatives": ["اسم بديل تجاري 1", "اسم بديل تجاري 2", "اسم بديل تجاري 3"],
+  "rawExtractedText": "كافة النصوص والكلمات الإنجليزية والعربية المقروءة من العلبة بما فيها أي نصوص صغيرة أو كتابات يدوية",
+  "drugClass": "الفئة والتصنيف العلاجي الدقيق باللغة العربية",
+  "mechanismOfAction": "شرح علمي مبسط وعميق لآلية عمل الدواء أو المكونات داخل الجسم",
+  "indications": ["داعي استعمال 1", "داعي استعمال 2", "داعي استعمال 3"],
+  "drugInteractions": ["تداخل دوائي أو غذائي 1", "تداخل 2"],
+  "specialPopulations": "إرشادات للحوامل والمرضعات وكبار السن وأصحاب الأمراض المزمنة",
+  "storageAdvice": "شروط الحفظ والتخزين المثالية",
+  "handwrittenNotes": "النص الحرفي لأي كتابة يدوية بالقلم إن وجدت وإلا فارغ",
+  "expiryDate": "تاريخ انتهاء الصلاحية إن وجد أو 'غير محدد على الجزء الظاهر من العلبة'"
+}
+`;
 
       try {
         const parsed = await callGeminiVision(prompt, imageBase64, mimeType);
@@ -239,12 +308,20 @@ app.post('/api/analyze-medicine', async (req: Request, res: Response) => {
       textClarity = 'high';
     }
 
-    // Match with database: ONLY if name is provided and at least 2 characters!
-    const normTrade = normalizeStr(detectedTradeName);
-    const normActive = normalizeStr(detectedActiveIngredient);
+    // Identify if detectedTradeName is missing, empty, or placeholder
+    const isInvalidTrade = !detectedTradeName ||
+      detectedTradeName.trim() === '' ||
+      detectedTradeName.includes('غير محدد') ||
+      detectedTradeName.toLowerCase().includes('unknown') ||
+      detectedTradeName.toLowerCase().includes('unspecified') ||
+      detectedTradeName.toLowerCase().includes('undefined');
 
     let matchedMed: Medicine | null | undefined = null;
-    if (normTrade && normTrade.length >= 2) {
+    let matchedActive: ActiveIngredient | null | undefined = null;
+
+    // A. Direct exact/substring match if tradeName is valid
+    if (!isInvalidTrade) {
+      const normTrade = normalizeStr(detectedTradeName);
       matchedMed = medicinesList.find(m => {
         const mAr = normalizeStr(m.tradeNameAr);
         const mEn = normalizeStr(m.tradeNameEn);
@@ -257,7 +334,62 @@ app.post('/api/analyze-medicine', async (req: Request, res: Response) => {
       });
     }
 
-    let matchedActive: ActiveIngredient | null | undefined = null;
+    // B. Fuzzy Search against medicinesList using OCR text, active ingredient, and manufacturer!
+    const ocrCorpus = normalizeStr(`${detectedTradeName} ${detectedActiveIngredient} ${rawOcrText} ${detectedManufacturer}`);
+    if ((!matchedMed || isInvalidTrade) && ocrCorpus.length >= 2) {
+      let bestScore = 0;
+      let candidateMed: Medicine | null = null;
+
+      for (const med of medicinesList) {
+        let score = 0;
+        const mEn = normalizeStr(med.tradeNameEn);
+        const mAr = normalizeStr(med.tradeNameAr);
+
+        // Word token / substring match for English trade name (e.g. "nosifol", "panadol", "augmentin", "concor", "glucophage")
+        if (mEn && mEn.length >= 3 && ocrCorpus.includes(mEn)) {
+          score += 60 + mEn.length * 2;
+        }
+        // Word token / substring match for Arabic trade name
+        if (mAr && mAr.length >= 3 && ocrCorpus.includes(mAr)) {
+          score += 60 + mAr.length * 2;
+        }
+
+        // Active ingredient match
+        const activeObj = activeIngredientsList.find(a => a.id === med.activeIngredientId);
+        if (activeObj) {
+          const aEn = normalizeStr(activeObj.nameEn);
+          const aAr = normalizeStr(activeObj.nameAr);
+          if (aEn && aEn.length >= 4 && ocrCorpus.includes(aEn)) {
+            score += 35;
+          }
+          if (aAr && aAr.length >= 4 && ocrCorpus.includes(aAr)) {
+            score += 35;
+          }
+        }
+
+        // Manufacturer bonus
+        if (med.manufacturer) {
+          const mfg = normalizeStr(med.manufacturer);
+          if (mfg.length >= 4 && ocrCorpus.includes(mfg)) {
+            score += 20;
+          }
+        }
+
+        if (score > bestScore && score >= 50) {
+          bestScore = score;
+          candidateMed = med;
+        }
+      }
+
+      if (candidateMed) {
+        matchedMed = candidateMed;
+        confidenceScore = Math.max(confidenceScore, 90);
+        textClarity = 'high';
+      }
+    }
+
+    // C. Active ingredient matching
+    const normActive = normalizeStr(detectedActiveIngredient);
     if (normActive && normActive.length >= 2) {
       matchedActive = activeIngredientsList.find(a => {
         const aAr = normalizeStr(a.nameAr);
@@ -300,10 +432,31 @@ app.post('/api/analyze-medicine', async (req: Request, res: Response) => {
 
     const requiresConfirmation = confidenceScore < 80;
 
-    // Use detected values directly from OCR/AI; NEVER fallback blindly to a wrong drug!
-    const finalTradeName = detectedTradeName || (matchedMed ? matchedMed.tradeNameAr : 'دواء غير محدد');
-    const finalActiveIngredient = detectedActiveIngredient || (matchedActive ? `${matchedActive.nameAr} (${matchedActive.nameEn})` : 'غير محدد بدقة');
-    const finalManufacturer = detectedManufacturer || (matchedMed ? matchedMed.manufacturer : 'غير محدد');
+    // D. Final recovery of fields - never return "دواء غير محدد" if a match or text is available!
+    let finalTradeName = !isInvalidTrade ? detectedTradeName : '';
+    if (!finalTradeName && matchedMed) {
+      finalTradeName = matchedMed.tradeNameAr + (matchedMed.tradeNameEn ? ` (${matchedMed.tradeNameEn})` : '');
+    }
+    if (!finalTradeName) {
+      finalTradeName = 'دواء غير محدد';
+    }
+
+    let finalActiveIngredient = detectedActiveIngredient;
+    if ((!finalActiveIngredient || finalActiveIngredient.includes('غير محدد')) && matchedActive) {
+      finalActiveIngredient = `${matchedActive.nameAr} (${matchedActive.nameEn})`;
+    }
+    if (!finalActiveIngredient) {
+      finalActiveIngredient = 'غير محدد بدقة';
+    }
+
+    let finalManufacturer = detectedManufacturer;
+    if ((!finalManufacturer || finalManufacturer.includes('غير محدد')) && matchedMed) {
+      finalManufacturer = matchedMed.manufacturer;
+    }
+    if (!finalManufacturer) {
+      finalManufacturer = 'غير محدد';
+    }
+
     const finalStrength = detectedStrength || (matchedMed ? matchedMed.strength : '');
     const finalDosageForm = detectedDosageForm || (matchedMed ? matchedMed.dosageForm : '');
     const finalElderlySummary = aiElderlyFriendlySummary || (matchedActive && matchedActive.indications.length > 0
@@ -343,28 +496,39 @@ app.post('/api/analyze-medicine', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Error analyzing medicine:', error);
     const query = req.body?.manualQuery;
-    const fallbackMed = query
+    const rawInput = req.body?.rawOcrText || req.body?.enhancementDetails || '';
+
+    let fallbackMed = query
       ? medicinesList.find(m => normalizeStr(m.tradeNameAr).includes(normalizeStr(query)) || normalizeStr(m.tradeNameEn).includes(normalizeStr(query)))
       : null;
 
+    if (!fallbackMed && rawInput) {
+      const normInput = normalizeStr(rawInput);
+      fallbackMed = medicinesList.find(m => normInput.includes(normalizeStr(m.tradeNameEn)) || normInput.includes(normalizeStr(m.tradeNameAr))) || null;
+    }
+
+    const fallbackActive = fallbackMed ? activeIngredientsList.find(a => a.id === fallbackMed.activeIngredientId) : null;
+
     // Graceful fallback response instead of failing with 500
     return res.json({
-      detectedTradeName: fallbackMed ? fallbackMed.tradeNameAr : 'دواء غير محدد',
-      detectedActiveIngredient: fallbackMed ? `${fallbackMed.strength} (${fallbackMed.dosageForm})` : 'يرجى مراجعة الصيدلي للتحقق',
+      detectedTradeName: fallbackMed ? `${fallbackMed.tradeNameAr} (${fallbackMed.tradeNameEn})` : 'دواء غير محدد',
+      detectedActiveIngredient: fallbackActive ? `${fallbackActive.nameAr} (${fallbackActive.nameEn})` : (fallbackMed ? fallbackMed.strength : 'يرجى مراجعة الصيدلي للتحقق'),
       detectedManufacturer: fallbackMed ? fallbackMed.manufacturer : 'غير محدد',
       detectedStrength: fallbackMed ? fallbackMed.strength : '',
       detectedDosageForm: fallbackMed ? fallbackMed.dosageForm : '',
-      confidenceScore: fallbackMed ? 80 : 35,
-      textClarity: 'low',
+      confidenceScore: fallbackMed ? 85 : 40,
+      textClarity: fallbackMed ? 'medium' : 'low',
       rawOcrText: '',
       matchedMedicine: fallbackMed || null,
-      activeIngredientData: null,
-      commercialAlternatives: [],
-      indicationsSummary: fallbackMed ? ['يرجى مراجعة الصيدلي للتحقق من دواعي الاستعمال.'] : ['تعذر استخراج دواعي الاستعمال تلقائياً من الخادم، يرجى استشارة الصيدلي.'],
-      sideEffectsSummary: ['يرجى قراءة النشرة الداخلية للدواء بعناية.'],
-      safetyWarnings: ['هذا الدواء يجب أن يؤخذ تحت إشراف صيدلي أو طبيب متخصص.'],
-      elderlyFriendlySummary: 'يرجى التأكد من اسم الدواء مع الصيدلي قبل الاستخدام لتناول الجرعة السليمة.',
-      howToTake: 'تناول الدواء مع كوب ماء كافٍ وفق توجيهات الطبيب أو الصيدلي.',
+      activeIngredientData: fallbackActive || null,
+      commercialAlternatives: fallbackActive ? medicinesList.filter(m => m.activeIngredientId === fallbackActive.id && m.id !== fallbackMed?.id) : [],
+      indicationsSummary: fallbackActive ? fallbackActive.indications : (fallbackMed ? ['يرجى مراجعة الصيدلي للتحقق من دواعي الاستعمال.'] : ['تعذر استخراج دواعي الاستعمال تلقائياً من الخادم، يرجى استشارة الصيدلي.']),
+      sideEffectsSummary: fallbackActive ? fallbackActive.sideEffects : ['يرجى قراءة النشرة الداخلية للدواء بعناية.'],
+      safetyWarnings: fallbackActive ? fallbackActive.warnings : ['هذا الدواء يجب أن يؤخذ تحت إشراف صيدلي أو طبيب متخصص.'],
+      elderlyFriendlySummary: fallbackActive && fallbackActive.indications.length > 0
+        ? `هذا الدواء علاج مخصص لـ: ${fallbackActive.indications[0]}. يرجى اتباع إرشادات الصيدلي بدقة.`
+        : 'يرجى التأكد من اسم الدواء مع الصيدلي قبل الاستخدام لتناول الجرعة السليمة.',
+      howToTake: fallbackActive ? fallbackActive.safeUsageAdvice : 'تناول الدواء مع كوب ماء كافٍ وفق توجيهات الطبيب أو الصيدلي.',
       expiryDate: 'غير محدد، يرجى تفقد تاريخ الصلاحية على العلبة',
       requiresConfirmation: true,
       serverFallbackUsed: true,
@@ -375,66 +539,96 @@ app.post('/api/analyze-medicine', async (req: Request, res: Response) => {
 });
 
 // ----------------------------------------------------
-// 2. API: Analyze Lab Test Sheet (OCR & Comparisons)
+// 2. API: Analyze Lab Test Sheet (International Standards WHO, Mayo Clinic, IFCC)
 // ----------------------------------------------------
 app.post('/api/analyze-lab', async (req: Request, res: Response) => {
   try {
     const { imageBase64, mimeType = 'image/jpeg', preselectedTests } = req.body;
 
-    let extractedTests: Array<{
-      testName: string;
-      code: string;
-      value: number;
-      unit: string;
-      referenceRangeText?: string;
-      confidence: number;
-    }> = [];
-
+    let patientName = '';
+    let patientAge = '';
+    let patientGender = '';
+    let labName = '';
+    let testDate = '';
+    let rawTests: any[] = [];
     let overallSummaryAr = '';
-    let confidenceScore = 90;
+    let confidenceScore = 92;
 
     if (imageBase64) {
-      const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
-
       const prompt = `
-أنت استشاري طب المختبرات والتحاليل الطبية السريرية (Clinical Pathologist).
-أمامك صورة لورقة تقرير معملي لتحاليل دم أو فحوصات مخبرية.
-مهمتك استخراج نتائج الفحوصات بدقة بالغة. احذر تماماً من الخلط بين الأرقام (مثل 7 و 1 أو 3 و 8) والتزم بالقيم والأرقام الموجودة في الورقة.
+أنت استشاري طب المختبرات وعلم الأمراض السريري الدولي (Senior International Clinical Pathologist).
+أمامك صورة لورقة تقرير معملي لتحاليل طبية صادرة من مختبر طبي.
+مهمتك قراءة التقرير المخبري بدقة 100% واستخراج كافة الفحوصات مهما كان عددها أو نوعها وفق المعايير السريرية العالمية (WHO, IFCC, Mayo Clinic, AACC).
 
-استخرج كل تحليل متوفر بالتقرير مع الخصائص التالية:
-- testName: اسم الفحص كما هو مكتوب (مثال: Hemoglobin, WBC, Fasting Blood Sugar, Creatinine, Cholesterol, HbA1c, ALT, AST, TSH, etc.)
-- code: الرمز الطبي المعتاد (WBC, RBC, HGB, PLT, GLU_FASTING, HBA1C, CHOL, TRIG, HDL, LDL, CREAT, UREA, ALT, AST, VITD, TSH, CRP, إلخ).
-- value: القيمة العددية المسجلة بالفحص كرقم عشري دقيق.
-- unit: وحدة القياس المكتوبة (مثل g/dL, mg/dL, %, 10^3/uL, U/L, إلخ).
-- referenceRangeText: النطاق المرجعي المكتوب في الورقة إن وجد (مثل "13.0 - 17.5").
-- aiStatus: حالة النتيجة بالاعتماد على النطاق المرجعي المطبوع بالورقة ("NORMAL" أو "HIGH" أو "LOW").
-- simplifiedExplanationAr: توضيح طبي مبسط ومباشر باللغة العربية للنتيجة ومقارنتها بالنسبة الطبيعية المطبوعة بالورقة.
-- confidence: نسبة يقين قراءة الرقم من 0 إلى 100.
-- causesOfElevation: الأسباب الطبية والفسيولوجية الشائعة لارتفاع هذا المؤشر.
-- causesOfDecrease: الأسباب الطبية والفسيولوجية الشائعة لانخفاض هذا المؤشر.
-- lifestyleAdvice: نصائح وتوجيهات غذائية ونمط حياة داعم لصحة هذا المؤشر.
+قواعد استخراج وتفسير الفحوصات:
+1. استخرج بيانات المريض والتقرير:
+   - patientName: اسم المريض إن وجد
+   - patientAge: عمر المريض إن وجد (مثل: 35 years, 8 months, 45y)
+   - patientGender: جنس المريض إن وجد (Male / Female / ذكر / أنثى)
+   - labName: اسم المختبر أو المستشفى المطبوع في الترويسة
+   - testDate: تاريخ إجراء التحليل المطبوع في الورقة
 
-اكتب أيضاً:
-- overallSummaryAr: تلخيص طبي شامل ومطمئن باللغة العربية يشرح حالة التحاليل بشكل عام ومبسط للمريض مع تأكيد استشارة الطبيب.
-- confidenceScore: متوسط دقة قراءة المستند ككل.
+2. أنواع الفحوصات المقبولة (الكمية، والوصفية، والميكروسكوبية):
+   - الفحوصات الرقمية الكمية (Quantitative): مثل الهيموجلوبين، السكر، الكرياتينين، الكوليسترول، إنزيمات الكبد، الهرمونات، كريات الدم.
+   - الفحوصات الوصفية والشبه كمية (Qualitative / Semi-quantitative): تحاليل البول والبراز (Urine Analysis, Stool Analysis) والميكروسكوب والأمصال (Serology, Antibodies, Antigens, Cultures, H. Pylori, CRP, Widal, Pregnancy test).
+   - احفظ القيمة في "value" كما هي نصاً أو رقماً (مثل: 14.2 أو "Negative" أو "Positive" أو "Non-reactive" أو "Reactive" أو "Nil" أو "Trace" أو "+" أو "++" أو "+++" أو "2-4 /HPF").
+   - حدد "isNumeric": true إذا كانت القيمة رقماً صرفاً، و false إذا كانت نصية أو شبه كمية.
+   - حدد "numericValue": القيمة كرقم float إذا كانت رقمية، أو null إذا كانت نصية.
 
-أخرج النتيجة بصيغة JSON فقط كالتالي:
+3. القاعدة الذهبية لتحديد حالة النتيجة (status: "NORMAL" | "HIGH" | "LOW"):
+   * الأولوية الأولى (النطاق المرجعي والعلامات المطبوعة بالورقة): اعتمد دائماً أولاً على النطاق المرجعي المطبوع في الورقة نفسها (referenceRangeText, printedMin, printedMax) ووحدة القياس المطبوعة (سواء وحدات تقليدية مثل mg/dL, g/dL أو وحدات دولية SI مثل mmol/L, umol/L, g/L, IU/L)، وعلى علامات المختبر المطبوعة بجانب النتيجة (مثل H, L, High, Low, *, Abnormal, Positive).
+   * الأولوية الثانية (المعايير العالمية حسب العمر والجنس): إذا لم يكن النطاق المرجعي مطبوعاً، طبق النطاق المرجعي العالمي المعتمد (WHO / Mayo Clinic) متوافقاً تماماً مع عمر المريض وجنسه المذكورين في التقرير ووحدة القياس المحددة (لا تطبق نطاق البالغين الذكور على طفل أو أنثى!).
+   * الفحوصات الوصفية والميكروسكوبية: إذا كانت النتيجة خالية من أي عدوى أو بكتيريا أو صديد (مثل: Negative, Non-reactive, Nil, Normal, Absent, صديد طبيعي 1-3) فالحالة "NORMAL". أما إذا وجدت عدوى أو خلل أو صديد مرتفع (مثل: Positive, Reactive, ++, صديد > 5) فالحالة "HIGH".
+
+4. لكل فحص استخرج الحقول الآتية:
+   - testName: اسم الفحص بالإنجليزي كما هو مطبوع في التقرير
+   - testNameAr: الاسم الطبي الشائع باللغة العربية
+   - code: الرمز القياسي العالمي للتحليل (مثل HGB, WBC, RBC, PLT, MCV, GLU, HBA1C, CHOL, TRIG, HDL, LDL, CREAT, UREA, ALT, AST, TSH, VITD, FERRITIN, CRP, URINE_PUS, URINE_RBC, STOOL_PARASITE, H_PYLORI, إلخ)
+   - category: التصنيف الطبي (cbc, blood_sugar, lipids, kidney, liver, vitamins_hormones, inflammation, urine_stool, coagulation, other)
+   - categoryAr: اسم التصنيف بالعربية (أمراض الدم، السكر والأيض، الدهون، الكلى والأملاح، الكبد، الفيتامينات والهرمونات، الالتهابات والمناعة، البول والبراز، السيولة، أخرى)
+   - value: القيمة المستخرجة (رقم أو نص كما في التقرير)
+   - isNumeric: boolean
+   - numericValue: number أو null
+   - unit: وحدة القياس كما في التقرير
+   - referenceRangeText: النطاق الطبيعي المعتمد لهذا المريض المأخوذ من الورقة أولاً أو المعيار العالمي
+   - minValue: الحد الأدنى الرقمي المعتمد للنطاق السليم (إن وجد)
+   - maxValue: الحد الأقصى الرقمي المعتمد للنطاق السليم (إن وجد)
+   - status: "NORMAL" أو "HIGH" أو "LOW"
+   - simplifiedExplanationAr: تفسير طبي مفصل ومبسط جداً للمريض باللغة العربية يوضح ماذا تعني نتيجته مقارنة بالمعدل الطبيعي
+   - causesOfElevation: الأسباب الطبية السريرية الشائعة للارتفاع أو النتيجة الإيجابية
+   - causesOfDecrease: الأسباب الطبية السريرية الشائعة للانخفاض
+   - lifestyleAdvice: نصائح عملية وغذائية موثوقة للمريض
+   - confidence: نسبة الدقة من 0 إلى 100
+
+أخرج النتيجة بصيغة JSON فقط بهذا الهيكل:
 {
-  "overallSummaryAr": "string",
-  "confidenceScore": number,
+  "patientName": "...",
+  "patientAge": "...",
+  "patientGender": "...",
+  "labName": "...",
+  "testDate": "...",
+  "overallSummaryAr": "ملخص سريري متكامل ومطمئن يشرح للمريض حالة كافة التحاليل بلغة ميسرة مع توجيهه لاستشارة الطبيب",
+  "confidenceScore": 95,
   "tests": [
     {
-      "testName": "string",
-      "code": "string",
-      "value": number,
-      "unit": "string",
-      "referenceRangeText": "string",
-      "aiStatus": "NORMAL",
-      "simplifiedExplanationAr": "string",
-      "confidence": number,
-      "causesOfElevation": "string",
-      "causesOfDecrease": "string",
-      "lifestyleAdvice": "string"
+      "testName": "Hemoglobin",
+      "testNameAr": "الهيموجلوبين (خضاب الدم)",
+      "code": "HGB",
+      "category": "cbc",
+      "categoryAr": "صورة الدم الشاملة (CBC)",
+      "value": "14.5",
+      "isNumeric": true,
+      "numericValue": 14.5,
+      "unit": "g/dL",
+      "referenceRangeText": "13.0 - 17.5",
+      "minValue": 13.0,
+      "maxValue": 17.5,
+      "status": "NORMAL",
+      "simplifiedExplanationAr": "نسبة الهيموجلوبين لديك طبيعية ومثالية وتعكس قدرة ممتازة لكريات الدم على حمل الأكسجين لكافة أنسجة الجسم.",
+      "causesOfElevation": "التدخين، الجفاف ونقص السوائل، الإقامة في المرتفعات.",
+      "causesOfDecrease": "فقر الدم (الأنيميا)، نقص الحديد، نقص فيتامين B12، النزيف.",
+      "lifestyleAdvice": "حافظ على تناول الأطعمة الغنية بالحديد وفيتامين سي لدعم تصنيع كريات الدم.",
+      "confidence": 98
     }
   ]
 }
@@ -442,8 +636,12 @@ app.post('/api/analyze-lab', async (req: Request, res: Response) => {
 
       try {
         const parsed = await callGeminiVision(prompt, imageBase64, mimeType);
-
-        extractedTests = parsed.tests || [];
+        patientName = parsed.patientName || '';
+        patientAge = parsed.patientAge || '';
+        patientGender = parsed.patientGender || '';
+        labName = parsed.labName || '';
+        testDate = parsed.testDate || '';
+        rawTests = Array.isArray(parsed.tests) ? parsed.tests : [];
         overallSummaryAr = parsed.overallSummaryAr || '';
         confidenceScore = typeof parsed.confidenceScore === 'number' ? parsed.confidenceScore : 90;
       } catch (aiErr: any) {
@@ -451,20 +649,19 @@ app.post('/api/analyze-lab', async (req: Request, res: Response) => {
         confidenceScore = 70;
       }
     } else if (preselectedTests && Array.isArray(preselectedTests)) {
-      extractedTests = preselectedTests;
+      rawTests = preselectedTests;
       confidenceScore = 98;
     }
 
-    // Process extracted tests against our reference database
     let normalCount = 0;
     let highCount = 0;
     let lowCount = 0;
 
-    const processedTests: ParsedLabItem[] = extractedTests.map((item: any, idx) => {
-      // Find matching reference by code or aliases
-      const normName = normalizeStr(item.testName);
-      const normCode = normalizeStr(item.code);
+    const processedTests: ParsedLabItem[] = rawTests.map((item: any, idx: number) => {
+      const normName = normalizeStr(item.testName || '');
+      const normCode = normalizeStr(item.code || '');
 
+      // Check database only to complement missing metadata
       const ref = labReferencesList.find(r => {
         if (normCode && normalizeStr(r.code) === normCode) return true;
         if (normName && normalizeStr(r.nameEn) === normName) return true;
@@ -475,49 +672,68 @@ app.post('/api/analyze-lab', async (req: Request, res: Response) => {
         });
       });
 
+      // Priority 1: Respect the status determined from the printed reference range or global pediatric/gender context
       let status: LabStatus = 'NORMAL';
-      let simplifiedExplanation = '';
-
-      if (ref) {
-        if (item.value < ref.minValue) {
+      const rawStatus = String(item.status || item.aiStatus || '').toUpperCase();
+      if (rawStatus.includes('CRITICAL_HIGH') || rawStatus === 'HIGH' || rawStatus.includes('ABNORMAL')) {
+        status = 'HIGH';
+        highCount++;
+      } else if (rawStatus.includes('CRITICAL_LOW') || rawStatus === 'LOW') {
+        status = 'LOW';
+        lowCount++;
+      } else if (rawStatus === 'NORMAL') {
+        status = 'NORMAL';
+        normalCount++;
+      } else if (typeof item.numericValue === 'number' && ref && (item.minValue == null || item.maxValue == null)) {
+        // Fallback to database range ONLY if AI did not find/estimate a specific printed range
+        if (item.numericValue < ref.minValue) {
           status = 'LOW';
           lowCount++;
-          simplifiedExplanation = `القيمة (${item.value} ${item.unit || ref.unit}) أقل من المعدل الطبيعي (${ref.minValue} - ${ref.maxValue}). ${ref.lowMeaningAr}`;
-        } else if (item.value > ref.maxValue) {
+        } else if (item.numericValue > ref.maxValue) {
           status = 'HIGH';
           highCount++;
-          simplifiedExplanation = `القيمة (${item.value} ${item.unit || ref.unit}) أعلى من المعدل الطبيعي (${ref.minValue} - ${ref.maxValue}). ${ref.highMeaningAr}`;
         } else {
           status = 'NORMAL';
           normalCount++;
-          simplifiedExplanation = `القيمة (${item.value} ${item.unit || ref.unit}) ضمن النطاق الطبيعي السليم (${ref.minValue} - ${ref.maxValue}). ${ref.normalDescriptionAr}`;
         }
       } else {
-        // Rely on aiStatus and simplifiedExplanationAr extracted from the sheet instead of UNKNOWN
-        const rawAiStat = String(item.aiStatus || '').toUpperCase();
-        if (rawAiStat.includes('HIGH')) {
-          status = 'HIGH';
-          highCount++;
-        } else if (rawAiStat.includes('LOW')) {
-          status = 'LOW';
-          lowCount++;
-        } else {
-          status = 'NORMAL';
-          normalCount++;
-        }
-        simplifiedExplanation = item.simplifiedExplanationAr || `القيمة (${item.value} ${item.unit || ''}) حسب النطاق المرجعي للورقة (${item.referenceRangeText || 'المخبري'}). النتيجة تبدو ${status === 'NORMAL' ? 'ضمن النطاق الطبيعي للمختبر' : status === 'HIGH' ? 'أعلى من المعدل الطبيعي' : 'أقل من المعدل الطبيعي'}. يرجى مراجعة الطبيب.`;
+        status = 'NORMAL';
+        normalCount++;
       }
 
+      const numVal = typeof item.numericValue === 'number'
+        ? item.numericValue
+        : (!isNaN(parseFloat(item.value)) ? parseFloat(item.value) : null);
+      const isNum = item.isNumeric !== undefined ? Boolean(item.isNumeric) : numVal !== null;
+
+      const minVal = typeof item.minValue === 'number' ? item.minValue : (ref && isNum ? ref.minValue : null);
+      const maxVal = typeof item.maxValue === 'number' ? item.maxValue : (ref && isNum ? ref.maxValue : null);
+
+      const refRangeStr = item.referenceRangeText || (minVal !== null && maxVal !== null ? `${minVal} - ${maxVal} ${item.unit || (ref ? ref.unit : '')}` : (ref ? `${ref.minValue} - ${ref.maxValue} ${ref.unit}` : 'حسب معايير المختبر'));
+
+      const explanation = item.simplifiedExplanationAr || (ref
+        ? (status === 'LOW' ? ref.lowMeaningAr : status === 'HIGH' ? ref.highMeaningAr : ref.normalDescriptionAr)
+        : `النتيجة (${item.value} ${item.unit || ''}) تعتبر ${status === 'NORMAL' ? 'ضمن المعدل الطبيعي السليم' : status === 'HIGH' ? 'أعلى من المعدل المرجعي' : 'أقل من المعدل المرجعي'} المعتمد.`);
+
       return {
-        id: `test-${idx}-${Date.now()}`,
-        testName: item.testName,
-        code: ref ? ref.code : (item.code || 'TEST'),
-        extractedValue: Number(item.value),
+        id: item.id || `test-${idx}-${Date.now()}`,
+        testName: item.testName || (ref ? ref.nameEn : 'Test'),
+        testNameAr: item.testNameAr || (ref ? ref.nameAr : undefined),
+        code: item.code || (ref ? ref.code : 'TEST'),
+        extractedValue: isNum && numVal !== null ? numVal : String(item.value || ''),
+        value: item.value !== undefined ? item.value : (isNum && numVal !== null ? numVal : ''),
+        isNumeric: isNum,
+        numericValue: numVal,
         extractedUnit: item.unit || (ref ? ref.unit : ''),
-        referenceRangeText: item.referenceRangeText || (ref ? `${ref.minValue} - ${ref.maxValue} ${ref.unit}` : undefined),
+        unit: item.unit || (ref ? ref.unit : ''),
+        referenceRangeText: refRangeStr,
+        minValue: minVal,
+        maxValue: maxVal,
+        category: item.category || (ref ? ref.category : 'other'),
+        categoryAr: item.categoryAr || (ref ? ref.categoryAr : 'فحوصات طبية'),
         status,
         refData: ref || undefined,
-        simplifiedExplanationAr: simplifiedExplanation,
+        simplifiedExplanationAr: explanation,
         confidence: item.confidence || confidenceScore,
         causesOfElevation: item.causesOfElevation || (ref ? ref.highMeaningAr : undefined),
         causesOfDecrease: item.causesOfDecrease || (ref ? ref.lowMeaningAr : undefined),
@@ -527,15 +743,20 @@ app.post('/api/analyze-lab', async (req: Request, res: Response) => {
 
     if (!overallSummaryAr) {
       if (highCount === 0 && lowCount === 0 && normalCount > 0) {
-        overallSummaryAr = 'جميع النتائج المستخرجة تقع ضمن النطاقات المرجعية الطبيعية، ومؤشرات الفحص تبدو مطمئنة للغاية.';
+        overallSummaryAr = 'جميع النتائج المستخرجة تقع ضمن النطاقات المرجعية الطبيعية المعتمدة، ومؤشرات الفحص مطمئنة للغاية.';
       } else {
-        overallSummaryAr = `تم فحص ${processedTests.length} نتائج مخبرية؛ وجد منها (${normalCount}) ضمن المعدل الطبيعي، و(${highCount}) أعلى من المعدل، و(${lowCount}) أقل من المعدل. يوصى بمناقشة هذه القيم مع الطبيب المعالج لوضع الخطة المناسبة.`;
+        overallSummaryAr = `تم استخراج وتفسير ${processedTests.length} فحصاً مخبرياً وفق المعايير السريرية العالمية؛ وجد منها (${normalCount}) في النطاق السليم، و(${highCount}) مرتفع، و(${lowCount}) منخفض. يُوصى بمشاركة التقرير مع طبيبك المختص.`;
       }
     }
 
     const requiresConfirmation = confidenceScore < 80;
 
     return res.json({
+      patientName,
+      patientAge,
+      patientGender,
+      labName,
+      testDate,
       tests: processedTests,
       overallSummaryAr,
       normalCount,
@@ -779,89 +1000,176 @@ ${matchedIngredients.length > 0 ? `المواد الفعالة المعروفة 
 });
 
 // ----------------------------------------------------
-// 4. API: Prescription / Rx Analysis & Deciphering
+// 4. API: Prescription / Rx Analysis & Deciphering (Senior Clinical Pharmacist)
 // ----------------------------------------------------
 app.post('/api/analyze-prescription', async (req: Request, res: Response) => {
   try {
-    const { imageBase64, mimeType = 'image/jpeg' } = req.body;
+    const imageBase64 = req.body.imageBase64 || req.body.image || req.body.base64Image;
+    const mimeType = req.body.mimeType || 'image/jpeg';
 
     if (!imageBase64) {
       return res.status(400).json({ error: 'يرجى تزويد صورة الروشتة الطبية.' });
     }
 
     const prompt = `
-أنت استشاري طب سريري وصيدلاني خبير في فك وقراءة خطوط الأطباء في الروشتات والوصفات الطبية المكتوبة بخط اليد والمطبوعة (Medical Prescription / Rx Reader).
-أمامك صورة لروشتة طبية ورقية. قم بفحص الصورة واستخراج كافة المعلومات بدقة بالغة مع ترجمة وتفسير المصطلحات الطبية والرموز الصيدلانية الشائعة (مثل tab, cap, susp, amp, bid, tid, qid, od, hs, ac, pc, prn, إلخ):
+أنت صيدلي إكلينيكي خبير في قراءة الوصفات الطبية (الروشتات) المكتوبة بخط اليد والمطبوعة.
+انظر إلى صورة الوصفة الطبية المرفقة واستخرج كل الأدوية المكتوبة فيها بدقة (حتى لو كان الخط يدوياً مائلاً أو مختصراً مثل: Rx Vigabatrin sachet 500mg أو Baclofen tab 10mg، وافهم اختصارات الجرعات مثل 1/2 tab، 1x1، x2، wk، وفك رموز التوقيع والطبيب ومدة العلاج).
 
-المطلوب استخراجه في هيئة JSON فقط:
-1. doctorName: اسم الطبيب وتخصصه إن وجد في ترويسة الروشتة
-2. clinicOrHospital: اسم المستشفى أو المركز أو العيادة
-3. prescriptionDate: تاريخ الروشتة المكتوب
-4. diagnosisNotes: التشخيص أو الشكوى أو الملاحظات الطبية المكتوبة
-5. medicines: قائمة الأدوية المكتوبة في الروشتة، لكل دواء:
-   - id: معرف فريد
-   - nameEn: اسم الدواء باللغة الإنجليزية كما كتبه الطبيب
-   - nameAr: اسم الدواء بالعربية
-   - activeIngredient: المادة الفعالة إن أمكن استنتاجها
-   - dosageForm: الشكل الصيدلاني (أقراص Tablets, شراب Syrup, حقن Injection, كبسولات, كريم, قطرة...)
-   - strength: التركيز (مثل 500mg, 1g, 20mg...)
-   - dosageInstructionAr: طريقة الاستخدام والجرعة بالعربية الواضحة جداً للمريض (مثال: قرص واحد مرتين يومياً بعد الأكل)
-   - frequencyAr: التكرار (مثال: مرتين في اليوم، كل 8 ساعات، مرة قبل النوم...)
-   - timingAr: التوقيت (قبل الأكل، بعد الأكل مباشرة، على معدة فارغة...)
-   - purposeAr: الغرض العلاجي المرجح من الدواء (مثال: مضاد حيوي لعلاج الالتهاب، مسكن ومضاد للحرارة، لضغط الدم...)
-   - duration: مدة العلاج المحددة (مثال: لمدة 5 أيام، حتى انتهاء العلبة...)
-   - pharmacistWarning: تنبيه مهم أو تأكيد يجب على المريض مراجعته مع الصيدلي أثناء الصرف
-6. overallAdviceAr: نصائح إرشادية وتوعوية عامة للمريض حول الالتزام بالخطة العلاجية
-7. elderlySummaryAr: ملخص سلس جداً ومبسط ومكتوب بلغة دافئة مناسبة للقراءة الصوتية لكبار السن توضح لهم الأدوية وكيف يأخذونها
-8. pharmacistConfirmationAlert: نص تحذيري واضح ومسؤول بأن قراءة الروشتة استرشادية ولا تغني أبداً عن مراجعة الصيدلي عند الصرف
-9. confidenceScore: نسبة الثقة من 0 إلى 100
-
-الصيغة المطلوبة JSON فقط:
+أرجع النتيجة بصيغة JSON فقط بهذا الهيكل الدقيق:
 {
-  "doctorName": "د. ...",
-  "clinicOrHospital": "...",
-  "prescriptionDate": "...",
-  "diagnosisNotes": "...",
-  "medicines": [
+  "doctorOrClinicName": "اسم الطبيب أو العيادة المذكور في الروشتة (أو 'وصفة طبية')",
+  "prescriptionDate": "تاريخ الوصفة أو مدة العلاج المكتوبة (مثلاً: علاج 6 أشهر)",
+  "diagnosisOrNotesAr": "ملاحظات عامة أو مدة العلاج المكتوبة في الروشتة",
+  "overallConfidence": 92,
+  "elderlySummaryAr": "ملخص صوتي واضح ومطمئن باللغة العربية يشرح للمريض أو عائلته الأدوية الموجودة في الروشتة وطريقة أخذ كل دواء منها بالتفصيل",
+  "items": [
     {
       "id": "med-1",
-      "nameEn": "Augmentin 1g",
-      "nameAr": "أوجمنتين 1 جم",
-      "activeIngredient": "Amoxicillin + Clavulanic Acid",
-      "dosageForm": "أقراص",
-      "strength": "1g",
-      "dosageInstructionAr": "قرص واحد كل 12 ساعة بعد الطعام مباشرة",
-      "frequencyAr": "مرتين يومياً",
-      "timingAr": "بعد الأكل",
-      "purposeAr": "مضاد حيوي لعلاج العدوى البكتيرية",
-      "duration": "لمدة 7 أيام متواصلة",
-      "pharmacistWarning": "يجب إكمال الكورس العلاجي كاملاً حتى لو شعرت بالتحسن"
+      "extractedName": "الاسم الإنجليزي للدواء والتركيز كما في الروشتة (مثال: Vigabatrin 500 mg Sachet)",
+      "arabicName": "اسم الدواء بالعربية (مثال: فيجاباترين 500 مجم أكياس)",
+      "activeIngredient": "المادة الفعالة العلمية",
+      "strength": "التركيز (مثال: 500 mg)",
+      "dosageFormAr": "الشكل الصيدلاني (أكياس / أقراص / شراب / كبسولات / حقن)",
+      "dosageAndFrequencyAr": "الجرعة وطريقة الاستخدام بالتفصيل كما كتبها الطبيب في الروشتة (مثال: نصف كيس 250 مجم مرتين يومياً، أو نصف قرص 5 مجم مرة يومياً لمدة أسبوع ثم مرتين يومياً)",
+      "durationAr": "مدة الاستخدام (مثال: حسب خطة الطبيب / 6 أشهر)",
+      "purposeAr": "لماذا يستخدم هذا الدواء باختصار ووضوح",
+      "importantWarningAr": "أهم نصيحة أو تحذير عند تناول هذا الدواء",
+      "alternatives": ["اسم بديل تجاري 1", "اسم بديل تجاري 2"],
+      "confidence": 90,
+      "needsPharmacistVerification": false
     }
-  ],
-  "overallAdviceAr": "...",
-  "elderlySummaryAr": "...",
-  "pharmacistConfirmationAlert": "تنبيه هام: هذه القراءة ذكية ومساعدة استرشادية؛ يُرجى دائماً عرض الروشتة على الصيدلي المرخص للتأكد النهائي من الجرعات ومطابقة المستحضر.",
-  "confidenceScore": 92
+  ]
 }
 `;
 
-    const result = await callGeminiVision(prompt, imageBase64, mimeType);
+    let result: any = null;
+    let visionErrorOccurred = false;
+    let visionErrorMessage = '';
+
+    try {
+      result = await callGeminiVision(prompt, imageBase64, mimeType);
+    } catch (visionErr: any) {
+      visionErrorOccurred = true;
+      visionErrorMessage = visionErr?.message || 'Vision analysis failed';
+      console.warn('Vision analysis failed for prescription, will format fallback:', visionErr);
+    }
+
+    if (!result || typeof result !== 'object') {
+      result = {};
+    }
+
+    let rawItems: any[] = [];
+    if (Array.isArray(result.items)) rawItems = result.items;
+    else if (Array.isArray(result.medicines)) rawItems = result.medicines;
+    else if (Array.isArray(result.medications)) rawItems = result.medications;
+    else if (Array.isArray(result.drugs)) rawItems = result.drugs;
+    else if (result.prescription && Array.isArray(result.prescription.items)) rawItems = result.prescription.items;
+    else if (result.prescription && Array.isArray(result.prescription.medicines)) rawItems = result.prescription.medicines;
+    else if (result.data && Array.isArray(result.data.items)) rawItems = result.data.items;
+    else if (result.data && Array.isArray(result.data.medicines)) rawItems = result.data.medicines;
+    else if (Array.isArray(result)) rawItems = result;
+
+    const normalizedMedicines = rawItems.map((m: any, idx: number) => {
+      const nameEn = m.extractedName || m.nameEn || m.tradeName || m.name || m.drugName || `Medicine ${idx + 1}`;
+      const nameAr = m.arabicName || m.nameAr || m.tradeNameAr || nameEn;
+      const instruction = m.dosageAndFrequencyAr || m.dosageInstructionAr || m.dosage || m.instructions || m.frequency || m.instruction || 'وفق إرشادات الطبيب والصيدلي';
+      const form = m.dosageFormAr || m.dosageForm || m.form || 'مستحضر صيدلاني';
+      const duration = m.durationAr || m.duration || '';
+      const purpose = m.purposeAr || m.purpose || m.indication || 'علاج الحالة الموصوفة';
+      const warning = m.importantWarningAr || m.pharmacistWarning || m.warning || m.notes || 'تأكد من الجرعة مع الصيدلي عند الصرف.';
+      const strength = m.strength || m.concentration || '';
+
+      return {
+        id: m.id || `rx-item-${idx + 1}-${Date.now()}`,
+        name: nameEn,
+        tradeName: nameEn,
+        extractedName: nameEn,
+        nameEn,
+        nameAr,
+        arabicName: nameAr,
+        activeIngredient: m.activeIngredient || m.genericName || '',
+        dosage: instruction,
+        dosageAndFrequencyAr: instruction,
+        instructions: instruction,
+        dosageInstructionAr: instruction,
+        strength,
+        form,
+        dosageForm: form,
+        dosageFormAr: form,
+        duration,
+        durationAr: duration,
+        purpose,
+        purposeAr: purpose,
+        indication: purpose,
+        warning,
+        importantWarningAr: warning,
+        pharmacistWarning: warning,
+        notes: warning,
+        frequencyAr: m.frequencyAr || '',
+        timingAr: m.timingAr || '',
+        alternatives: Array.isArray(m.alternatives) ? m.alternatives : (Array.isArray(m.commercialAlternatives) ? m.commercialAlternatives : []),
+        confidence: typeof m.confidence === 'number' ? m.confidence : (typeof m.confidenceScore === 'number' ? m.confidenceScore : 92),
+        needsPharmacistVerification: Boolean(m.needsPharmacistVerification),
+      };
+    });
+
+    const docName = result.doctorOrClinicName || result.doctorName || (normalizedMedicines.length > 0 ? 'طبيب معالج' : '');
+    const clinic = result.clinicOrHospital || '';
+    const diag = result.diagnosisOrNotesAr || result.diagnosisNotes || '';
+    const advice = result.overallAdviceAr || (normalizedMedicines.length > 0
+      ? 'تناول الأدوية في مواعيدها المحددة مع كمية كافية من الماء والالتزام التام بالجرعات المقررة.'
+      : 'لم نتمكن من استخراج أسماء الأدوية بوضوح. يرجى إعادة تصوير الروشتة في مكان ذي إضاءة جيدة أو مراجعة الصيدلي.');
+    const elderlySummary = result.elderlySummaryAr || (normalizedMedicines.length > 0
+      ? `تحتوي الروشتة على ${normalizedMedicines.length} أدوية: ${normalizedMedicines.map((m: any) => `${m.nameAr}: ${m.dosageInstructionAr}`).join('، و')}. عافاك الله وشفاك.`
+      : 'يا والدي الكريم، الصورة لم تكن واضحة كفاية لقراءة خط الطبيب، يرجى إعادة التصوير أو عرض الروشتة مباشرة على الصيدلي.');
+    const alert = result.pharmacistConfirmationAlert || 'تنبيه أمان: هذه القراءة ذكية ومساعدة استرشادية؛ تأكد دائماً مع الصيدلي المرخص عند صرف الدواء.';
+    const conf = typeof result.overallConfidence === 'number'
+      ? result.overallConfidence
+      : (typeof result.confidenceScore === 'number' ? result.confidenceScore : (normalizedMedicines.length > 0 ? 90 : 30));
 
     return res.json({
-      doctorName: result.doctorName || '',
-      clinicOrHospital: result.clinicOrHospital || '',
+      doctorName: docName,
+      doctorOrClinicName: docName,
+      clinicOrHospital: clinic,
+      patientName: result.patientName || '',
       prescriptionDate: result.prescriptionDate || '',
-      diagnosisNotes: result.diagnosisNotes || '',
-      medicines: Array.isArray(result.medicines) ? result.medicines : [],
-      overallAdviceAr: result.overallAdviceAr || 'التزم بمواعيد الجرعات كما كتبها الطبيب واشرب كمية كافية من الماء.',
-      elderlySummaryAr: result.elderlySummaryAr || '',
-      pharmacistConfirmationAlert: result.pharmacistConfirmationAlert || 'تنبيه أمان: تأكد دائماً مع الصيدلي عند صرف الروشتة لضمان صحة الدواء الموصوف.',
-      confidenceScore: result.confidenceScore || 90,
+      diagnosisNotes: diag,
+      diagnosisOrNotesAr: diag,
+      medicines: normalizedMedicines,
+      items: normalizedMedicines,
+      medications: normalizedMedicines,
+      overallAdviceAr: advice,
+      elderlySummaryAr: elderlySummary,
+      pharmacistConfirmationAlert: alert,
+      confidenceScore: conf,
+      overallConfidence: conf,
+      serverFallbackUsed: visionErrorOccurred,
+      errorMessage: visionErrorMessage || undefined,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
     console.error('Error analyzing prescription:', error);
-    return res.status(500).json({ error: error.message || 'حدث خطأ أثناء قراءة الروشتة الطبية.' });
+    // Return a structured JSON response instead of unhandled 500
+    return res.json({
+      doctorName: '',
+      doctorOrClinicName: '',
+      clinicOrHospital: '',
+      patientName: '',
+      prescriptionDate: '',
+      diagnosisNotes: '',
+      diagnosisOrNotesAr: '',
+      medicines: [],
+      items: [],
+      medications: [],
+      overallAdviceAr: 'تعذر فك خطوط الروشتة تلقائياً من الصورة الحالية. يرجى إعادة تصوير الروشتة بإضاءة ساطعة أو مراجعة الصيدلي مباشرة.',
+      elderlySummaryAr: 'يا والدي الكريم، الصورة لم تكن واضحة كفاية لقراءة خط الطبيب، يرجى عرض الروشتة مباشرة على الصيدلي للتأكد من العلاج.',
+      pharmacistConfirmationAlert: 'تنبيه: يجب عرض الروشتة على الصيدلي للتأكد من قراءة الخط بدقة تامة.',
+      confidenceScore: 30,
+      overallConfidence: 30,
+      serverFallbackUsed: true,
+      errorMessage: error?.message || 'Server error',
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
