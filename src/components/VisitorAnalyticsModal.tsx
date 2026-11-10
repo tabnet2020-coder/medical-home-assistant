@@ -1,387 +1,333 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Users,
-  X,
+  Eye,
+  Activity,
   Lock,
+  X,
   Download,
   RefreshCw,
-  Activity,
-  Globe,
+  Trash2,
   Smartphone,
-  Scan,
+  Globe,
+  Clock,
   ShieldCheck,
-  CheckCircle2,
-  AlertCircle,
-  FileSpreadsheet
+  AlertCircle
 } from 'lucide-react';
-import { VisitorStatsSummary, VisitorLogEntry } from '../types';
+import { VisitorStatsSummary } from '../types';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  publicStats: VisitorStatsSummary | null;
+  onRefreshPublicStats: () => void;
 }
 
-export const VisitorAnalyticsModal: React.FC<Props> = ({ isOpen, onClose }) => {
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    try {
-      return sessionStorage.getItem('visitor_analytics_auth') === 'true';
-    } catch {
-      return false;
-    }
-  });
-
-  const [stats, setStats] = useState<VisitorStatsSummary | null>(null);
+export const VisitorAnalyticsModal: React.FC<Props> = ({
+  isOpen,
+  onClose,
+  publicStats,
+  onRefreshPublicStats,
+}) => {
+  const [adminCode, setAdminCode] = useState('');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [adminData, setAdminData] = useState<VisitorStatsSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Fetch stats from server
-  const loadStats = async () => {
+  if (!isOpen) return null;
+
+  const handleLoginAndFetch = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setIsLoading(true);
-    setFetchError(null);
+    setError(null);
     try {
-      const res = await fetch('/api/visitor-stats');
-      if (!res.ok) throw new Error('فشل جلب إحصائيات الزوار من الخادم');
+      const res = await fetch('/api/visitors/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: adminCode.trim() }),
+      });
+
+      if (!res.ok) {
+        throw new Error('رمز الدخول غير صحيح. يرجى إدخال الرمز المعتمد لمدير النظام.');
+      }
+
       const data: VisitorStatsSummary = await res.json();
-      setStats(data);
+      setAdminData(data);
+      setIsAuthenticated(true);
+      onRefreshPublicStats();
     } catch (err: any) {
-      console.error('Error fetching visitor stats:', err);
-      setFetchError(err.message || 'تعذر تحميل الإحصائيات');
+      setError(err.message || 'تعذر التحقق من الرمز');
     } finally {
       setIsLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (isOpen && isAuthenticated) {
-      loadStats();
-    }
-  }, [isOpen, isAuthenticated]);
-
-  const handleVerifyPin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanPin = pinInput.trim().toLowerCase();
-    if (cleanPin === 'tabony2026' || cleanPin === '2026') {
-      setIsAuthenticated(true);
-      setPinError(false);
-      try {
-        sessionStorage.setItem('visitor_analytics_auth', 'true');
-      } catch (err) {
-        console.warn('Session storage error:', err);
-      }
-      loadStats();
-    } else {
-      setPinError(true);
-    }
-  };
-
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setPinInput('');
+  const handleClearLogs = async () => {
+    if (!window.confirm('هل أنت متأكد من تصفير سجل الزوار بالكامل؟')) return;
+    setIsLoading(true);
     try {
-      sessionStorage.removeItem('visitor_analytics_auth');
-    } catch (err) {
-      console.warn('Session storage error:', err);
+      const res = await fetch('/api/visitors/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: adminCode.trim(), action: 'clear' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAdminData(data);
+        onRefreshPublicStats();
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Export to CSV with UTF-8 BOM for Arabic compatibility in Excel
   const handleExportCSV = () => {
-    if (!stats || !stats.recentVisitors || stats.recentVisitors.length === 0) {
-      alert('لا توجد سجلات متاحة للتصدير حالياً.');
-      return;
-    }
+    if (!adminData?.recentVisitors || adminData.recentVisitors.length === 0) return;
 
-    const headers = ['المعرف', 'التاريخ والوقت', 'الدولة', 'عنوان IP', 'الجهاز', 'المتصفح', 'الإجراء', 'التفاصيل'];
-    const rows = stats.recentVisitors.map(v => [
-      `"${v.id}"`,
-      `"${new Date(v.timestamp).toLocaleString('ar-EG')}"`,
-      `"${v.country || 'غير محدد'}"`,
-      `"${v.ip || 'محلي'}"`,
-      `"${v.device || 'مجهول'}"`,
-      `"${v.browser || 'مجهول'}"`,
-      `"${v.action || 'زيارة'}"`,
-      `"${(v.details || '').replace(/"/g, '""')}"`
+    const headers = ['التاريخ والوقت', 'النشاط / العملية', 'التفاصيل', 'الجهاز', 'المتصفح', 'الدولة', 'عنوان IP'];
+    const rows = adminData.recentVisitors.map(v => [
+      new Date(v.timestamp).toLocaleString('ar-LY'),
+      v.action,
+      v.details || '-',
+      v.device,
+      v.browser,
+      v.country,
+      v.ip,
     ]);
 
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const csvContent =
+      '\uFEFF' +
+      [headers, ...rows]
+        .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `visitors_analytics_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
+    link.href = url;
+    link.download = `سجل_زوار_المساعد_الطبي_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
-    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
-  if (!isOpen) return null;
+  const stats = adminData || publicStats;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
       <div
-        className="bg-white rounded-2xl max-w-4xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-right font-['Cairo',sans-serif]"
+        className="bg-white rounded-2xl max-w-4xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-right"
         dir="rtl"
       >
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/80">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
-              <Users className="w-5 h-5" />
+        <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 px-6 py-4 text-white flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center">
+              <Activity className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-                <span>لوحة إحصائيات وسجل الزوار</span>
-                {isAuthenticated && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    تم التحقق من المشرف
-                  </span>
-                )}
-              </h3>
-              <p className="text-xs text-slate-500">
-                متابعة حركة الاستخدام الحقيقية ونشاط الفحوصات الطبية
-              </p>
+              <h3 className="font-extrabold text-base sm:text-lg">إحصائيات حركة الموقع وسجل الزوار</h3>
+              <p className="text-xs text-slate-300">متابعة حية للزيارات والفحوصات الطبية المنجزة</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {isAuthenticated && (
-              <>
-                <button
-                  onClick={loadStats}
-                  disabled={isLoading}
-                  title="تحديث الإحصائيات"
-                  className="p-2 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                </button>
-
-                <button
-                  onClick={handleExportCSV}
-                  title="تصدير إلى Excel/CSV"
-                  className="px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>تصدير CSV</span>
-                </button>
-
-                <button
-                  onClick={handleLogout}
-                  className="text-xs text-slate-500 hover:text-rose-600 px-2 py-1 hover:bg-slate-100 rounded-lg cursor-pointer"
-                >
-                  قفل
-                </button>
-              </>
-            )}
-
-            <button
-              onClick={onClose}
-              className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-lg cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="p-5 overflow-y-auto space-y-5 flex-1">
+        {/* Body */}
+        <div className="p-5 sm:p-6 overflow-y-auto space-y-6 flex-1">
+          {stats && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+              <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-center">
+                <span className="text-xs font-bold text-emerald-800 flex items-center justify-center gap-1">
+                  <Eye className="w-3.5 h-3.5" />
+                  إجمالي الزيارات
+                </span>
+                <p className="text-2xl font-black text-emerald-950 mt-1 font-mono">{stats.totalVisits}</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-center">
+                <span className="text-xs font-bold text-blue-800 flex items-center justify-center gap-1">
+                  <Users className="w-3.5 h-3.5" />
+                  زوار فريدون
+                </span>
+                <p className="text-2xl font-black text-blue-950 mt-1 font-mono">{stats.uniqueVisitors}</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 text-center">
+                <span className="text-xs font-bold text-amber-900 flex items-center justify-center gap-1">
+                  <Activity className="w-3.5 h-3.5" />
+                  إجمالي الفحوصات
+                </span>
+                <p className="text-2xl font-black text-amber-950 mt-1 font-mono">{stats.totalScans}</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-teal-50/70 border border-teal-200 text-center">
+                <span className="text-xs font-bold text-teal-800 flex items-center justify-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  متواجدون الآن
+                </span>
+                <p className="text-2xl font-black text-teal-950 mt-1 font-mono">{stats.onlineNow}</p>
+              </div>
+            </div>
+          )}
+
+          {stats?.breakdown && (
+            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80">
+              <h4 className="text-xs font-extrabold text-slate-700 mb-3">توزيع العمليات حسب الأقسام:</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-center text-xs">
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-500 block">فحص الأدوية</span>
+                  <strong className="text-base font-mono text-emerald-700">{stats.breakdown.medicine}</strong>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-500 block">تحاليل المختبر</span>
+                  <strong className="text-base font-mono text-teal-700">{stats.breakdown.lab}</strong>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-500 block">قراءة الروشتات</span>
+                  <strong className="text-base font-mono text-indigo-700">{stats.breakdown.prescription}</strong>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-500 block">فحص التعارضات</span>
+                  <strong className="text-base font-mono text-amber-700">{stats.breakdown.interaction}</strong>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-500 block">مسح الباركود</span>
+                  <strong className="text-base font-mono text-purple-700">{stats.breakdown.barcode}</strong>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Secure Login Form (No password or hint displayed publicly) */}
           {!isAuthenticated ? (
-            /* PIN Protection Form */
-            <div className="max-w-md mx-auto py-8 text-center space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center mx-auto">
-                <Lock className="w-7 h-7 text-emerald-700" />
+            <form
+              onSubmit={handleLoginAndFetch}
+              className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4 max-w-md mx-auto text-center"
+            >
+              <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto">
+                <Lock className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-base font-bold text-slate-900">
-                  منطقة المشرفين وإحصائيات الاستخدام
-                </h4>
+                <h4 className="text-sm font-black text-slate-900">سجل الزوار التفصيلي (خاص بمدير النظام)</h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  أدخل الرمز السري للوصول إلى لوحة سجلات الزوار وتصدير التقارير (tabony2026 أو 2026).
+                  أدخل رمز المرور السري لعرض سجلات IP والدول والعمليات وتصديرها إلى ملف Excel.
                 </p>
               </div>
 
-              <form onSubmit={handleVerifyPin} className="space-y-3 pt-2">
-                <input
-                  type="password"
-                  value={pinInput}
-                  onChange={e => setPinInput(e.target.value)}
-                  placeholder="أدخل الرمز السري هنا..."
-                  className={`w-full px-4 py-2.5 rounded-xl border text-center text-sm font-bold tracking-widest outline-none transition-all ${
-                    pinError
-                      ? 'border-red-400 ring-2 ring-red-100 bg-red-50/50'
-                      : 'border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white'
-                  }`}
-                  autoFocus
-                />
-
-                {pinError && (
-                  <p className="text-xs text-red-600 font-semibold flex items-center justify-center gap-1">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    <span>الرمز السري غير صحيح. يرجى المحاولة مرة أخرى.</span>
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-                >
-                  فتح لوحة الإحصائيات
-                </button>
-              </form>
-            </div>
-          ) : (
-            /* Authenticated Analytics Dashboard */
-            <div className="space-y-5">
-              {fetchError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                  <span>{fetchError}</span>
+              {error && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{error}</span>
                 </div>
               )}
 
-              {/* 1. Stat Metric Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-                    <span>إجمالي الزيارات</span>
-                    <Globe className="w-4 h-4 text-emerald-600" />
-                  </div>
-                  <p className="text-2xl font-black text-slate-900">
-                    {stats?.totalVisits?.toLocaleString('ar-EG') || '0'}
-                  </p>
-                </div>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={adminCode}
+                  onChange={e => setAdminCode(e.target.value)}
+                  placeholder="أدخل رمز المرور..."
+                  className="flex-1 px-3.5 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-600 text-center font-mono"
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  disabled={isLoading || !adminCode.trim()}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  {isLoading ? 'جاري التحقق...' : 'دخول'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  <span>سجل حركة الزوار التفصيلي (آخر {adminData?.recentVisitors?.length || 0} عملية):</span>
+                </h4>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-                    <span>الزوار الفريدين</span>
-                    <Users className="w-4 h-4 text-teal-600" />
-                  </div>
-                  <p className="text-2xl font-black text-slate-900">
-                    {stats?.uniqueVisitors?.toLocaleString('ar-EG') || '0'}
-                  </p>
-                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleLoginAndFetch()}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    <span>تحديث</span>
+                  </button>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-                    <span>متواجدون الآن</span>
-                    <Activity className="w-4 h-4 text-green-500 animate-pulse" />
-                  </div>
-                  <p className="text-2xl font-black text-green-600">
-                    {stats?.onlineNow || 1}
-                  </p>
-                </div>
+                  <button
+                    type="button"
+                    onClick={handleExportCSV}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>تصدير Excel (CSV)</span>
+                  </button>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-                    <span>إجمالي الفحوصات</span>
-                    <Scan className="w-4 h-4 text-indigo-600" />
-                  </div>
-                  <p className="text-2xl font-black text-slate-900">
-                    {stats?.totalScans?.toLocaleString('ar-EG') || '0'}
-                  </p>
+                  <button
+                    type="button"
+                    onClick={handleClearLogs}
+                    className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>تصفير</span>
+                  </button>
                 </div>
               </div>
 
-              {/* 2. Breakdown by Scan Feature */}
-              {stats?.breakdown && (
-                <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-2.5">
-                  <h4 className="text-xs font-bold text-slate-800">
-                    تفصيل الفحوصات حسب الوحدة الطبية:
-                  </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
-                    <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-100">
-                      <p className="text-emerald-800 font-medium">فحص الأدوية</p>
-                      <p className="text-lg font-black text-emerald-900 mt-0.5">
-                        {stats.breakdown.medicine || 0}
-                      </p>
-                    </div>
-
-                    <div className="p-2.5 bg-teal-50 rounded-lg border border-teal-100">
-                      <p className="text-teal-800 font-medium">التحاليل الطبية</p>
-                      <p className="text-lg font-black text-teal-900 mt-0.5">
-                        {stats.breakdown.lab || 0}
-                      </p>
-                    </div>
-
-                    <div className="p-2.5 bg-indigo-50 rounded-lg border border-indigo-100">
-                      <p className="text-indigo-800 font-medium">الروشتات</p>
-                      <p className="text-lg font-black text-indigo-900 mt-0.5">
-                        {stats.breakdown.prescription || 0}
-                      </p>
-                    </div>
-
-                    <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-100">
-                      <p className="text-amber-800 font-medium">تعارض الأدوية</p>
-                      <p className="text-lg font-black text-amber-900 mt-0.5">
-                        {stats.breakdown.interaction || 0}
-                      </p>
-                    </div>
-
-                    <div className="p-2.5 bg-purple-50 rounded-lg border border-purple-100">
-                      <p className="text-purple-800 font-medium">بحث الباركود</p>
-                      <p className="text-lg font-black text-purple-900 mt-0.5">
-                        {stats.breakdown.barcode || 0}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 3. Detailed Visitor Activity Table */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                    <span>سجل أحدث الزيارات والعمليات (آخر 50 عملية):</span>
-                  </h4>
-                  <span className="text-[11px] text-slate-500">
-                    {stats?.recentVisitors?.length || 0} سجل مسجل
-                  </span>
-                </div>
-
-                <div className="border border-slate-200 rounded-xl overflow-x-auto">
-                  <table className="w-full text-xs text-right divide-y divide-slate-200">
-                    <thead className="bg-slate-50 text-slate-600 font-bold">
+              <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                <div className="overflow-x-auto max-h-80">
+                  <table className="w-full text-right text-xs">
+                    <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 sticky top-0">
                       <tr>
-                        <th className="py-2.5 px-3">التاريخ والوقت</th>
-                        <th className="py-2.5 px-3">الدولة / IP</th>
-                        <th className="py-2.5 px-3">الجهاز</th>
-                        <th className="py-2.5 px-3">النشاط</th>
+                        <th className="py-2.5 px-3">الوقت والتاريخ</th>
+                        <th className="py-2.5 px-3">العملية</th>
                         <th className="py-2.5 px-3">التفاصيل</th>
+                        <th className="py-2.5 px-3">الجهاز والمتصفح</th>
+                        <th className="py-2.5 px-3">الدولة / IP</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 bg-white">
-                      {!stats?.recentVisitors || stats.recentVisitors.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="py-6 text-center text-slate-400">
-                            لا توجد سجلات مسجلة حتى الآن
-                          </td>
-                        </tr>
-                      ) : (
-                        stats.recentVisitors.map(v => (
-                          <tr key={v.id} className="hover:bg-slate-50/70 transition-colors">
-                            <td className="py-2 px-3 text-slate-500 whitespace-nowrap font-mono text-[11px]">
-                              {new Date(v.timestamp).toLocaleString('ar-EG')}
-                            </td>
-                            <td className="py-2 px-3 text-slate-800 whitespace-nowrap">
-                              <span className="font-semibold">{v.country || 'ليبيا'}</span>
-                              <span className="text-[10px] text-slate-400 block font-mono">{v.ip}</span>
-                            </td>
-                            <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
-                              <span>{v.device}</span>
-                              <span className="text-[10px] text-slate-400 block">{v.browser}</span>
-                            </td>
-                            <td className="py-2 px-3 whitespace-nowrap">
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                                {v.action}
+                    <tbody className="divide-y divide-slate-100">
+                      {adminData?.recentVisitors && adminData.recentVisitors.length > 0 ? (
+                        adminData.recentVisitors.map(item => (
+                          <tr key={item.id} className="hover:bg-emerald-50/40">
+                            <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-3 h-3 text-slate-400" />
+                                {new Date(item.timestamp).toLocaleString('ar-LY')}
                               </span>
                             </td>
-                            <td className="py-2 px-3 text-slate-600 max-w-xs truncate" title={v.details}>
-                              {v.details || '—'}
+                            <td className="py-2.5 px-3 font-bold text-slate-900">{item.action}</td>
+                            <td className="py-2.5 px-3 text-emerald-800 font-medium">{item.details || '-'}</td>
+                            <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1">
+                                <Smartphone className="w-3 h-3 text-slate-400" />
+                                {item.device} • {item.browser}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1">
+                                <Globe className="w-3 h-3 text-emerald-600" />
+                                {item.country} ({item.ip})
+                              </span>
                             </td>
                           </tr>
                         ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="py-8 text-center text-slate-400">
+                            لا توجد سجلات بعد
+                          </td>
+                        </tr>
                       )}
                     </tbody>
                   </table>
@@ -389,17 +335,6 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({ isOpen, onClose }) => {
               </div>
             </div>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-          <span>نظام إحصائيات مشفّر ومحمي للحفاظ على سرية البيانات وسرعة الأداء.</span>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold rounded-xl transition-colors cursor-pointer"
-          >
-            إغلاق
-          </button>
         </div>
       </div>
     </div>
