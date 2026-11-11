@@ -7,7 +7,8 @@ export interface ChangelogItem {
   changes: string[];
 }
 
-export const changelogList: ChangelogItem[] = [
+// تم تصحيح الاسم هنا إلى releaseHistory ليطابق الاستيراد في ChangelogModal
+export const releaseHistory: ChangelogItem[] = [
   {
     version: 'v2.6.0',
     date: '2026-11-10',
