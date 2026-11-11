@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   Eye,
@@ -7,7 +7,6 @@ import {
   X,
   Download,
   RefreshCw,
-  Trash2,
   Smartphone,
   Globe,
   Clock,
@@ -19,74 +18,61 @@ import { VisitorStatsSummary } from '../types';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  publicStats: VisitorStatsSummary | null;
-  onRefreshPublicStats: () => void;
+  publicStats?: any;
+  onRefreshPublicStats?: () => void;
 }
+
+const VALID_ADMIN_CODES = ['tabony2026', '2026'];
 
 export const VisitorAnalyticsModal: React.FC<Props> = ({
   isOpen,
   onClose,
-  publicStats,
-  onRefreshPublicStats,
 }) => {
   const [adminCode, setAdminCode] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminData, setAdminData] = useState<VisitorStatsSummary | null>(null);
+  const [stats, setStats] = useState<VisitorStatsSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  if (!isOpen) return null;
-
-  const handleLoginAndFetch = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  const fetchStats = async () => {
     setIsLoading(true);
-    setError(null);
     try {
-      const res = await fetch('/api/visitors/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: adminCode.trim() }),
-      });
-
-      if (!res.ok) {
-        throw new Error('رمز الدخول غير صحيح. يرجى إدخال الرمز المعتمد لمدير النظام.');
+      const res = await fetch('/api/visitor-stats');
+      if (res.ok) {
+        const data: VisitorStatsSummary = await res.json();
+        setStats(data);
       }
-
-      const data: VisitorStatsSummary = await res.json();
-      setAdminData(data);
-      setIsAuthenticated(true);
-      onRefreshPublicStats();
-    } catch (err: any) {
-      setError(err.message || 'تعذر التحقق من الرمز');
+    } catch (e) {
+      console.warn('Error fetching visitor stats:', e);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleClearLogs = async () => {
-    if (!window.confirm('هل أنت متأكد من تصفير سجل الزوار بالكامل؟')) return;
-    setIsLoading(true);
-    try {
-      const res = await fetch('/api/visitors/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: adminCode.trim(), action: 'clear' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAdminData(data);
-        onRefreshPublicStats();
-      }
-    } finally {
-      setIsLoading(false);
+  useEffect(() => {
+    if (isOpen) {
+      fetchStats();
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (VALID_ADMIN_CODES.includes(adminCode.trim())) {
+      setIsAuthenticated(true);
+      fetchStats();
+    } else {
+      setError('رمز المرور غير صحيح. هذه البوابة مخصصة لمدير النظام فقط.');
     }
   };
 
   const handleExportCSV = () => {
-    if (!adminData?.recentVisitors || adminData.recentVisitors.length === 0) return;
+    if (!stats?.recentVisitors || stats.recentVisitors.length === 0) return;
 
     const headers = ['التاريخ والوقت', 'النشاط / العملية', 'التفاصيل', 'الجهاز', 'المتصفح', 'الدولة', 'عنوان IP'];
-    const rows = adminData.recentVisitors.map(v => [
+    const rows = stats.recentVisitors.map(v => [
       new Date(v.timestamp).toLocaleString('ar-LY'),
       v.action,
       v.details || '-',
@@ -110,8 +96,6 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({
     link.click();
     URL.revokeObjectURL(url);
   };
-
-  const stats = adminData || publicStats;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
@@ -205,10 +189,10 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Secure Login Form (No password or hint displayed publicly) */}
+          {/* Secure Admin Form - No password shown */}
           {!isAuthenticated ? (
             <form
-              onSubmit={handleLoginAndFetch}
+              onSubmit={handleLogin}
               className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4 max-w-md mx-auto text-center"
             >
               <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto">
@@ -217,7 +201,7 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({
               <div>
                 <h4 className="text-sm font-black text-slate-900">سجل الزوار التفصيلي (خاص بمدير النظام)</h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  أدخل رمز المرور السري لعرض سجلات IP والدول والعمليات وتصديرها إلى ملف Excel.
+                  أدخل رمز المرور السري لعرض تفاصيل الزوار وعناوين IP وتصدير السجل إلى Excel.
                 </p>
               </div>
 
@@ -235,14 +219,13 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({
                   onChange={e => setAdminCode(e.target.value)}
                   placeholder="أدخل رمز المرور..."
                   className="flex-1 px-3.5 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-600 text-center font-mono"
-                  autoFocus
                 />
                 <button
                   type="submit"
-                  disabled={isLoading || !adminCode.trim()}
+                  disabled={!adminCode.trim()}
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
                 >
-                  {isLoading ? 'جاري التحقق...' : 'دخول'}
+                  دخول
                 </button>
               </div>
             </form>
@@ -251,13 +234,13 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>سجل حركة الزوار التفصيلي (آخر {adminData?.recentVisitors?.length || 0} عملية):</span>
+                  <span>سجل حركة الزوار التفصيلي ({stats?.recentVisitors?.length || 0} عملية مسجلة):</span>
                 </h4>
 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => handleLoginAndFetch()}
+                    onClick={fetchStats}
                     className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
@@ -271,15 +254,6 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>تصدير Excel (CSV)</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleClearLogs}
-                    className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>تصفير</span>
                   </button>
                 </div>
               </div>
@@ -297,8 +271,8 @@ export const VisitorAnalyticsModal: React.FC<Props> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {adminData?.recentVisitors && adminData.recentVisitors.length > 0 ? (
-                        adminData.recentVisitors.map(item => (
+                      {stats?.recentVisitors && stats.recentVisitors.length > 0 ? (
+                        stats.recentVisitors.map(item => (
                           <tr key={item.id} className="hover:bg-emerald-50/40">
                             <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">
                               <span className="flex items-center gap-1">
